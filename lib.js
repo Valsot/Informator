@@ -155,9 +155,9 @@
   INF.presets = {
     train: {
       title: 'Электричка',
-      phrases: { dost: 'Поезд следует до станции', sovsemi: 'со всеми остановками', krome: 'со всеми остановками, кроме', sost: 'с остановками', sled: 'Следующая станция', dver: 'Осторожно, двери закрываются', prib: 'Поезд прибыл на станцию', privyhode: 'При выходе не забывайте свои вещи' },
+      phrases: { dost: 'Поезд следует до станции', sovsemi: 'со всеми остановками', krome: 'кроме', sost: 'с остановками', sled: 'Следующая станция', dver: 'Осторожно, двери закрываются', prib: 'Поезд прибыл на станцию', privyhode: 'При выходе не забывайте свои вещи' },
       tpl: {
-        start: [{ p: 'dost' }, { t: 'dest', s: 'name' }, { p: 'sovsemi', cond: 'noSkips' }, { p: 'krome', cond: 'fewSkips' }, { t: 'skips', s: 'name', cond: 'fewSkips' }, { p: 'sost', cond: 'manySkips' }, { t: 'stops', s: 'name', cond: 'manySkips' }],
+        start: [{ p: 'dost' }, { t: 'dest', s: 'name' }, { p: 'sovsemi', cond: 'notManySkips' }, { p: 'krome', cond: 'fewSkips' }, { t: 'skips', s: 'name', cond: 'fewSkips' }, { p: 'sost', cond: 'manySkips' }, { t: 'stops', s: 'name', cond: 'manySkips' }],
         dep: [{ p: 'sled' }, { t: 'next', s: 'name' }, { p: 'dver' }],
         arr: [{ t: 'cur', s: 'name' }, { pause: 400 }, { p: 'sled' }, { t: 'next', s: 'name' }],
         last: [{ p: 'prib' }, { t: 'cur', s: 'name' }, { p: 'privyhode' }],
@@ -192,6 +192,15 @@
   INF.SLOTS = { name: 'название', imya: 'имя без «следующая»', otpr: 'при отправлении', prib: 'при прибытии', last: 'конечная', proezd: 'проезд без остановки (целой фразой)', perehod: 'переход', vyhod: 'выход к…' };
 
   INF.clone = o => JSON.parse(JSON.stringify(o));
+  /** Старые линии: «со всеми остановками» звучит и перед «кроме» (в пакетах «кроме» — отдельное слово) */
+  INF.migrateLine = function (l) {
+    const st = l.tpl && l.tpl.start; if (!st) return false;
+    if (!st.some(x => x.p === 'krome' && x.cond === 'fewSkips')) return false;
+    let ch = false;
+    st.forEach(x => { if (x.p && x.p !== 'krome' && x.cond === 'noSkips') { x.cond = 'notManySkips'; ch = true; } });
+    if (l.phrases && l.phrases.krome && l.phrases.krome.label === 'со всеми остановками, кроме') { l.phrases.krome.label = 'кроме'; ch = true; }
+    return ch;
+  };
 
   /** Направления маршрута по его пути-кольцу. Путь: [{id, st, skip, term}];
       отметки term делят кольцо на направления; без отметок маршрут кольцевой.
@@ -233,6 +242,7 @@
     noSkips: c => !(c.skips || []).length,
     fewSkips: c => (c.skips || []).length > 0 && (c.skips || []).length <= (c.inter || 0) / 2,
     manySkips: c => (c.skips || []).length > (c.inter || 0) / 2,
+    notManySkips: c => (c.skips || []).length <= (c.inter || 0) / 2,
     hasPasses: c => (c.passes || []).length > 0,
     noPasses: c => !(c.passes || []).length
   };
@@ -542,7 +552,7 @@
     const findPh = re => { const c = (allClips || []).find(c => packs.has(c.pack) && re.test(INF.stem(c.name).replace(/^\d+_/, ''))); return c ? c.id : null; };
     const di = tpl.start.findIndex(x => x.t === 'dest');
     if (di >= 0 && !tpl.start.some(x => x.cond)) {
-      tpl.start = tpl.start.slice(0, di + 1).concat(tpl.start.slice(di + 1).map(x => Object.assign({}, x, { cond: 'noSkips' })),
+      tpl.start = tpl.start.slice(0, di + 1).concat(tpl.start.slice(di + 1).map(x => Object.assign({}, x, { cond: 'notManySkips' })),
         [{ p: 'krome', cond: 'fewSkips' }, { t: 'skips', s: 'name', cond: 'fewSkips' }, { p: 'sost', cond: 'manySkips' }, { t: 'stops', s: 'name', cond: 'manySkips' }]);
       phrases.krome = phrases.krome || { label: INF.presets.train.phrases.krome, clip: findPh(/krom/i) };
       phrases.sost = phrases.sost || { label: INF.presets.train.phrases.sost, clip: findPh(/^(s_?ost|sostanov.*)$/i) };

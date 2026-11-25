@@ -1,5 +1,5 @@
 /* Информатор — офлайн-кэш оболочки приложения */
-const CACHE = 'informator-v5';
+const CACHE = 'informator-v6';
 const SHELL = ['./', 'index.html', 'style.css', 'lib.js', 'app.js', 'editors.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
