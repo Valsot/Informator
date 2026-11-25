@@ -148,43 +148,48 @@
        {p: 'key'}                 — фраза линии (line.phrases[key].clip)
        {t: 'next', s: 'name', fb} — подстановка станции: cur|next|dest|first|prev|skips; s — слот звука
        {pause: 400}               — тишина, мс
-       + необязательно cond: 'hasSkips' | 'noSkips'
+       + необязательно cond: ключ из INF.COND
   */
-  INF.WHO = { cur: 'текущая', next: 'следующая', dest: 'конечная', first: 'начальная', prev: 'предыдущая', skips: 'без остановок' };
+  INF.WHO = { cur: 'текущая', next: 'следующая', dest: 'конечная', first: 'начальная', prev: 'предыдущая', pass: 'проезжаемая (в объявлении о проезде)', skips: 'все без остановок (список)', stops: 'все остановки (список)', passes: 'проезжаемые до следующей (список)' };
 
   INF.presets = {
     train: {
       title: 'Электричка',
-      phrases: { dost: 'Поезд следует до станции', sovsemi: 'со всеми остановками', krome: 'со всеми остановками, кроме', sled: 'Следующая станция', dver: 'Осторожно, двери закрываются', prib: 'Поезд прибыл на станцию', privyhode: 'При выходе не забывайте свои вещи' },
+      phrases: { dost: 'Поезд следует до станции', sovsemi: 'со всеми остановками', krome: 'со всеми остановками, кроме', sost: 'с остановками', sled: 'Следующая станция', dver: 'Осторожно, двери закрываются', prib: 'Поезд прибыл на станцию', privyhode: 'При выходе не забывайте свои вещи' },
       tpl: {
-        start: [{ p: 'dost' }, { t: 'dest', s: 'name' }, { p: 'sovsemi', cond: 'noSkips' }, { p: 'krome', cond: 'hasSkips' }, { t: 'skips', s: 'name', cond: 'hasSkips' }],
+        start: [{ p: 'dost' }, { t: 'dest', s: 'name' }, { p: 'sovsemi', cond: 'noSkips' }, { p: 'krome', cond: 'fewSkips' }, { t: 'skips', s: 'name', cond: 'fewSkips' }, { p: 'sost', cond: 'manySkips' }, { t: 'stops', s: 'name', cond: 'manySkips' }],
         dep: [{ p: 'sled' }, { t: 'next', s: 'name' }, { p: 'dver' }],
         arr: [{ t: 'cur', s: 'name' }, { pause: 400 }, { p: 'sled' }, { t: 'next', s: 'name' }],
-        last: [{ p: 'prib' }, { t: 'cur', s: 'name' }, { p: 'privyhode' }]
+        last: [{ p: 'prib' }, { t: 'cur', s: 'name' }, { p: 'privyhode' }],
+        pass: []
       }
     },
     metro: {
       title: 'Метро',
-      phrases: { gong: 'Гонг', dver: 'Осторожно, двери закрываются', paus: 'Пауза' },
+      passAt: 'arr',
+      phrases: { gong: 'Гонг', dver: 'Осторожно, двери закрываются', paus: 'Пауза', uvst: 'Уважаемые пассажиры! Станцию', bezost: 'поезд проследует без остановки' },
       tpl: {
         start: [],
         dep: [{ p: 'gong' }, { p: 'dver' }, { t: 'next', s: 'otpr', fb: 1 }],
         arr: [{ p: 'gong' }, { t: 'cur', s: 'prib', fb: 1 }, { p: 'paus' }, { t: 'next', s: 'name' }],
-        last: [{ p: 'gong' }, { t: 'cur', s: 'last', fb: 1 }]
+        last: [{ p: 'gong' }, { t: 'cur', s: 'last', fb: 1 }],
+        pass: [{ p: 'uvst' }, { t: 'pass', s: 'imya' }, { p: 'bezost' }]
       }
     },
     tram: {
       title: 'Трамвай / троллейбус / автобус',
-      phrases: { ost: 'Остановка', sled: 'Следующая остановка', dver: 'Осторожно, двери закрываются', konech: 'Конечная. Просьба освободить вагон' },
+      passAt: 'dep',
+      phrases: { ost: 'Остановка', sled: 'Следующая остановка', dver: 'Осторожно, двери закрываются', konech: 'Конечная. Просьба освободить вагон', uvost: 'Остановку', bezost: 'трамвай проследует без остановки' },
       tpl: {
         start: [],
         dep: [{ p: 'dver' }, { p: 'sled' }, { t: 'next', s: 'name' }],
         arr: [{ p: 'ost' }, { t: 'cur', s: 'name' }],
-        last: [{ p: 'ost' }, { t: 'cur', s: 'name' }, { p: 'konech' }]
+        last: [{ p: 'ost' }, { t: 'cur', s: 'name' }, { p: 'konech' }],
+        pass: [{ p: 'uvost' }, { t: 'pass', s: 'name' }, { p: 'bezost' }]
       }
     }
   };
-  INF.SLOTS = { name: 'название', otpr: 'при отправлении', prib: 'при прибытии', last: 'конечная', perehod: 'переход', vyhod: 'выход к…' };
+  INF.SLOTS = { name: 'название', imya: 'имя без «следующая»', otpr: 'при отправлении', prib: 'при прибытии', last: 'конечная', proezd: 'проезд без остановки (целой фразой)', perehod: 'переход', vyhod: 'выход к…' };
 
   INF.clone = o => JSON.parse(JSON.stringify(o));
 
@@ -213,13 +218,21 @@
     return c[slot + '@' + (dir + 1)] || c[slot] || (fb && slot !== 'name' ? (c['name@' + (dir + 1)] || c.name) : null) || null;
   }
 
-  /** Раскрыть элементы в сегменты звука. ctx: {cur,next,dest,first,prev,skips:[st],dir,line} */
+  /** Раскрыть элементы в сегменты звука.
+      ctx: {cur,next,dest,first,prev,pass, skips,stops,passes:[st], inter, dir, line} */
+  INF.COND = {
+    hasSkips: c => (c.skips || []).length > 0,
+    noSkips: c => !(c.skips || []).length,
+    fewSkips: c => (c.skips || []).length > 0 && (c.skips || []).length <= (c.inter || 0) / 2,
+    manySkips: c => (c.skips || []).length > (c.inter || 0) / 2,
+    hasPasses: c => (c.passes || []).length > 0,
+    noPasses: c => !(c.passes || []).length
+  };
+  INF.LISTS = { skips: 1, stops: 1, passes: 1 };
   INF.expand = function (items, ctx, warn) {
     const out = [];
-    const hasSkips = ctx.skips && ctx.skips.length > 0;
     for (const it of items || []) {
-      if (it.cond === 'hasSkips' && !hasSkips) continue;
-      if (it.cond === 'noSkips' && hasSkips) continue;
+      if (it.cond && INF.COND[it.cond] && !INF.COND[it.cond](ctx)) continue;
       if (it.pause) { out.push({ pause: it.pause }); continue; }
       if (it.c) { out.push({ c: it.c }); continue; }
       if (it.miss) { warn && warn('нет файла ' + it.miss); continue; }
@@ -228,8 +241,8 @@
         if (ph && ph.clip) out.push({ c: ph.clip }); else warn && warn('фраза «' + ((ph && ph.label) || it.p) + '» без звука');
         continue;
       }
-      if (it.t === 'skips') {
-        (ctx.skips || []).forEach((st, i) => {
+      if (INF.LISTS[it.t]) {
+        (ctx[it.t] || []).forEach((st, i) => {
           if (i) out.push({ pause: 250 });
           const c = slotClip(st, it.s || 'name', ctx.dir, 1);
           if (c) out.push({ c }); else warn && warn('у «' + st.name + '» нет звука');
@@ -241,7 +254,7 @@
         if (!st) continue;
         const c = slotClip(st, it.s || 'name', ctx.dir, it.fb);
         if (c) out.push({ c });
-        else if ((it.s || 'name') === 'name' || it.fb) warn && warn('у «' + st.name + '» нет звука (' + (INF.SLOTS[it.s] || it.s) + ')');
+        else if ((it.s || 'name') === 'name' || it.fb || it.t === 'pass') warn && warn('у «' + st.name + '» нет звука (' + (INF.SLOTS[it.s] || it.s) + ')');
       }
     }
     return out;
@@ -276,33 +289,56 @@
     const skips = seq.filter(x => !x.stop).map(x => x.st);
     const T = line.tpl || {};
     const n = stops.length, circ = ring;
-    const base = { line, dir, skips, first: stops[0], dest: circ ? null : stops[n - 1] };
+    if (n < 2) return [];
+    // проезжаемые без остановки после i-й остановки (до следующей)
+    const passesAfter = stops.map((s, i) => { const out = []; const b1 = i + 1 < n ? stopIdx[i + 1] : seq.length; for (let k = stopIdx[i] + 1; k < b1; k++) out.push(seq[k].st); return out; });
+    const inter = Math.max(0, seq.length - 2);
+    const base = { line, dir, skips, inter, stops: circ ? stops : stops.slice(1, -1), first: stops[0], dest: circ ? null : stops[n - 1], passes: [] };
+    const passAt = line.passAt || 'arr';
     const anns = [];
     const mk = (kind, label, sub, items, ctx, eid) => {
       const warn = [], c = Object.assign({}, base, ctx);
       const segs = INF.expand(items, c, m => warn.push(m));
       const k = kind + ':' + eid;
-      anns.push({ k, key: tag + k, label, sub, kind, segs, off: false, warn, ctx: c, dir });
+      const a = { k, key: tag + k, label, sub, kind, segs, off: false, warn, ctx: c, dir };
+      anns.push(a);
+      return a;
+    };
+    // «Станцию X поезд проследует без остановки» — по шаблону pass, на каждую проезжаемую
+    const addPass = (a, list) => {
+      if (!list.length) return;
+      if ((!T.pass || !T.pass.length) && !list.some(st => slotClip(st, 'proezd', dir, 0))) return;
+      for (const st of list) {
+        // своя запись целой фразой у станции важнее шаблона
+        const whole = slotClip(st, 'proezd', dir, 0);
+        const segs = whole ? [{ c: whole }] : INF.expand(T.pass, Object.assign({}, a.ctx, { pass: st }), m => a.warn.push(m));
+        if (segs.length) a.segs = a.segs.concat([{ pause: 300 }], segs);
+      }
+      (a.extra = a.extra || []).push('проезд: ' + list.map(s => s.name).join(', '));
     };
     const eid = i => seq[stopIdx[i]].e.id;
-    if (n < 2) return [];
     if (T.start && T.start.length && !circ) {
-      mk('start', 'До ' + stops[n - 1].name, skips.length ? 'кроме: ' + skips.map(s => s.name).join(', ') : 'со всеми остановками', T.start, { cur: stops[0], next: stops[1] }, eid(0));
+      const many = skips.length > inter / 2;
+      mk('start', 'До ' + stops[n - 1].name, !skips.length ? 'со всеми остановками' : many ? 'с остановками: ' + base.stops.map(s => s.name).join(', ') : 'кроме: ' + skips.map(s => s.name).join(', '), T.start, { cur: stops[0], next: stops[1], passes: passesAfter[0] }, eid(0));
     }
     const nx = i => circ ? stops[(i + 1) % n] : stops[i + 1];
     const pv = i => circ ? stops[(i - 1 + n) % n] : stops[i - 1];
     const steps = circ ? n : n - 1;
     for (let i = 0; i < steps; i++) {
       const cur = stops[i], next = nx(i);
-      mk('dep', 'Отпр. → ' + next.name, 'от ' + cur.name, T.dep, { cur, next, prev: pv(i) }, eid(i));
-      const passes = [], a1 = stopIdx[i], b1 = i + 1 < n ? stopIdx[i + 1] : seq.length;
-      for (let k = a1 + 1; k < b1; k++) passes.push(seq[k].st.name);
-      anns[anns.length - 1].passes = passes;
+      const d = mk('dep', 'Отпр. → ' + next.name, 'от ' + cur.name, T.dep, { cur, next, prev: pv(i), passes: passesAfter[i] }, eid(i));
+      d.passes = passesAfter[i].map(s => s.name);
+      // объявление о проезде: при прибытии на предыдущую остановку, а с начальной — при отправлении
+      if (passAt !== 'arr' || (i === 0 && !circ)) addPass(d, passesAfter[i]);
       const j = circ ? (i + 1) % n : i + 1;
       const at = stops[j];
       if (!circ && j === n - 1) mk('last', 'Приб. ' + at.name, 'конечная', T.last && T.last.length ? T.last : T.arr, { cur: at, next: null, prev: cur }, eid(j));
-      else mk('arr', 'Приб. ' + at.name, 'далее ' + nx(j).name, T.arr, { cur: at, next: nx(j), prev: cur }, eid(j));
+      else {
+        const a = mk('arr', 'Приб. ' + at.name, 'далее ' + nx(j).name, T.arr, { cur: at, next: nx(j), prev: cur, passes: passesAfter[j] }, eid(j));
+        if (passAt !== 'dep') addPass(a, passesAfter[j]);
+      }
     }
+    // кольцо: проезд перед первой остановкой объявляется при прибытии на последнюю
     return anns;
   }
 
@@ -478,7 +514,21 @@
       const tail = seq2.slice(1, seq2[seq2.length - 1] === seq1[0] ? -1 : undefined);
       for (const st of tail) path.push({ id: INF.uid(), st: st.id });
     }
-    return { line: { id: INF.uid(), name: route.line || route.name, city: route.city || '', type: route.type || '', color: route.color || '#d6083b', stations, phrases, tpl }, rules, path };
+    // проезд без остановки и «кроме» / «с остановками» в начальном
+    let passAt = 'arr';
+    if (phrases.gong) {
+      phrases.uvst = phrases.uvst || { label: INF.presets.metro.phrases.uvst, clip: null };
+      phrases.bezost = phrases.bezost || { label: INF.presets.metro.phrases.bezost, clip: null };
+      tpl.pass = INF.clone(INF.presets.metro.tpl.pass);
+    } else tpl.pass = [];
+    const di = tpl.start.findIndex(x => x.t === 'dest');
+    if (di >= 0 && !tpl.start.some(x => x.cond)) {
+      tpl.start = tpl.start.slice(0, di + 1).concat(tpl.start.slice(di + 1).map(x => Object.assign({}, x, { cond: 'noSkips' })),
+        [{ p: 'krome', cond: 'fewSkips' }, { t: 'skips', s: 'name', cond: 'fewSkips' }, { p: 'sost', cond: 'manySkips' }, { t: 'stops', s: 'name', cond: 'manySkips' }]);
+      phrases.krome = phrases.krome || { label: INF.presets.train.phrases.krome, clip: null };
+      phrases.sost = phrases.sost || { label: INF.presets.train.phrases.sost, clip: null };
+    }
+    return { line: { id: INF.uid(), name: route.line || route.name, city: route.city || '', type: route.type || '', color: route.color || '#d6083b', stations, phrases, tpl, passAt }, rules, path };
   };
 
   /* ---------- WAV ---------- */

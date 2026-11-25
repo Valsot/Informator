@@ -286,7 +286,7 @@ function openSheet(title, build) {
   const body = h('div', { class: 'sbody' });
   const bd = h('div', { class: 'bd', onclick: () => UI.pop() });
   const sh = h('div', { class: 'sheet' }, h('div', { class: 'grab' }), h('div', { class: 'sh' }, h('div', { class: 'tt' }, title), ib('close', () => UI.pop(), 'Закрыть')), body);
-  const api = { body, re() { body.innerHTML = ''; build(body, api); }, close: () => UI.pop() };
+  const api = { body, re() { const y = body.scrollTop; body.innerHTML = ''; build(body, api); body.scrollTop = y; }, close: () => UI.pop() };
   $('#sheetwrap').append(bd, sh);
   UI.push({ close: () => { bd.remove(); sh.remove(); if (api.onclose) api.onclose(); } });
   api.re();
@@ -383,7 +383,7 @@ function viewPlayer() {
     })));
   }
   // схема
-  root.append(h('h2', null, 'Объявления'));
+  root.append(h('h2', { class: 'row' }, h('span', { class: 'grow' }, 'Объявления'), h('button', { class: 'btn sm', onclick: () => stopsSheet(R) }, '⊘ Станции без остановки')));
   const diag = h('div', { class: 'diag' });
   PL.anns.forEach((a, i) => {
     if (a.passes && a.passes.length) {
@@ -430,6 +430,40 @@ function annMenu(a, i) {
   }
   if (a.warn.length) items.push({ label: '⚠ Что не так: ' + a.warn.slice(0, 3).join('; '), do: () => editRoute(R) });
   menu(a.label, items);
+}
+/** Быстрая настройка: какие станции проезжаем без остановки. Объявления перестраиваются сами. */
+function stopsSheet(R) {
+  if (R.mode === 'list') {
+    const done = S.routes.find(x => x.from === R.id);
+    openSheet('Станции без остановки', b => {
+      b.append(h('p', null, 'Этот маршрут импортирован списком готовых объявлений, в нём можно только выключать отдельные записи.'),
+        h('p', null, 'Чтобы исключать именно станции, а объявления перестраивались сами («следующая станция» перескакивает через пропуск, добавляется «…проследует без остановки», в электричке — «кроме…»), нужен маршрут по станциям. Программа соберёт его из этого списка: распознает станции и шаблоны объявлений.'),
+        h('p', { class: 'dim small' }, 'Исходный маршрут-список останется как был.'),
+        done ? h('button', { class: 'btn wide', style: { marginBottom: '8px' }, onclick: () => { UI.pop(); PL.setRoute(done.id); UI.render(); setTimeout(() => stopsSheet(done), 50); } }, 'Открыть уже собранный «' + done.name + '»') : null,
+        h('button', { class: 'btn pri wide', onclick: () => { const nr = makeBuildFromList(R); if (!nr) return; UI.pop(); PL.setRoute(nr.id); UI.render(); toast('Собран маршрут по станциям'); setTimeout(() => stopsSheet(nr), 50); } }, 'Собрать маршрут по станциям'));
+    });
+    return;
+  }
+  const line = lineById(R.line); if (!line) return;
+  const ui = stopsSheet.ui || (stopsSheet.ui = { both: true });
+  openSheet('Станции без остановки', (b, api) => {
+    b.append(h('div', { class: 'seg', style: { marginBottom: '10px' } }, [[true, 'в обе стороны'], [false, 'только в этом направлении']].map(([v, t]) => h('button', { class: ui.both === v ? 'on' : '', onclick: () => { ui.both = v; api.re(); } }, t))));
+    const dirs = INF.routeDirs(R, line), R2 = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+    dirs.forEach((d, di) => {
+      b.append(h('h2', null, d.ring ? '↻ Кольцевой' : R2[di] + ' → ' + d.seq[d.seq.length - 1].st.name));
+      b.append(h('div', { class: 'list' }, d.seq.map((x, i) => {
+        const term = !d.ring && (i === 0 || i === d.seq.length - 1);
+        return h('div', { class: 'li', style: { minHeight: '46px', padding: '6px 14px' } },
+          h('div', { class: 'grow' }, h('div', { class: 'ell', style: { opacity: x.e.skip ? .5 : 1, textDecoration: x.e.skip ? 'line-through' : '' } }, x.st.name), term ? h('div', { class: 'tiny dim' }, 'конечная') : null),
+          term ? null : sw(!x.e.skip, v => {
+            const targets = ui.both ? (R.path || []).filter(e => e.st === x.e.st && !e.term) : [x.e];
+            targets.forEach(e => e.skip = !v);
+            save(); PL.rebuild(); api.re();
+          }));
+      })));
+    });
+    b.append(h('div', { class: 'dim tiny', style: { marginTop: '10px' } }, 'Подробнее — в редакторе маршрута ✎ и в шаблонах линии («Проезд без остановки», «Начальное»).'));
+  });
 }
 function chooseRoute() {
   openSheet('Маршрут', b => {

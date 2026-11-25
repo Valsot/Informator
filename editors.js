@@ -49,6 +49,7 @@ function applyPreset(l, k) {
   const p = INF.presets[k];
   for (const key in p.phrases) if (!l.phrases[key]) l.phrases[key] = { label: p.phrases[key], clip: null };
   l.tpl = INF.clone(p.tpl);
+  l.passAt = p.passAt || 'arr';
 }
 
 /* ================= Выбор звука / фразы / станции ================= */
@@ -98,7 +99,7 @@ function pickStation(line, cb, title) {
 }
 
 /* ================= Редактор элементов объявления ================= */
-const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков' };
+const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков', fewSkips: 'если пропусков не больше половины', manySkips: 'если пропусков больше половины', hasPasses: 'если до следующей проезд без остановки', noPasses: 'если до следующей проезда нет' };
 function itemLabel(it, line) {
   if (it.pause) return '⏸ ' + (it.pause / 1000) + ' с';
   if (it.c) return '♪ ' + clipLabel(it.c);
@@ -189,10 +190,11 @@ function editLine(l) {
     b.append(h('div', { class: 'dim small' }, 'Из чего собирается объявление. {следующая} и т.п. подставляют звук остановки; «фразы» — звуки выше. Можно поставить условие «если есть пропуски» — например, «со всеми остановками, кроме {без остановок}».'));
     b.append(h('div', { class: 'btns' }, Object.entries(INF.presets).map(([k, p]) => h('button', { class: 'btn sm ghost', onclick: () => confirmBox('Заменить шаблоны на стандартные «' + p.title + '»? Фразы останутся.', () => { applyPreset(l, k); save(); api.re(); }, 'Заменить') }, '↺ ' + p.title))));
     l.tpl = l.tpl || {};
-    const T = [['start', 'Начальное — до отправления с конечной', 'Например: «Поезд следует до {конечная}…». Пусто — не объявляется.'], ['dep', 'Отправление (двери закрываются)', ''], ['arr', 'Прибытие на остановку', ''], ['last', 'Прибытие на конечную', 'Пусто — как обычное прибытие.']];
+    const T = [['start', 'Начальное — до отправления с конечной', 'Например: «Поезд следует до {конечная}» + «со всеми остановками» (если нет пропусков) / «кроме» {все без остановок} (если пропусков не больше половины) / «с остановками» {все остановки} (если больше). Пусто — не объявляется.'], ['dep', 'Отправление (двери закрываются)', ''], ['arr', 'Прибытие на остановку', ''], ['last', 'Прибытие на конечную', 'Пусто — как обычное прибытие.'], ['pass', 'Проезд без остановки — на каждую проезжаемую', 'Добавляется сам, когда до следующей остановки есть станции без остановки. {проезжаемая} — та, которую проезжаем. Если у станции записан звук «проезд без остановки (целой фразой)», вместо шаблона звучит он. Для электричек оставь пустым — там пропуски объявляются только в начальном.']];
     for (const [k, t, d] of T) {
       l.tpl[k] = l.tpl[k] || [];
       b.append(...[h('div', { class: 'tplname' }, t), d ? h('div', { class: 'tiny dim', style: { margin: '-4px 2px 6px' } }, d) : null].filter(Boolean), itemsEditor(l.tpl[k], { line: l, tokens: true, onChange: () => PL.rebuild() }));
+      if (k === 'pass') b.append(h('div', { class: 'tiny dim', style: { margin: '8px 2px 4px' } }, 'Когда объявлять проезд'), h('div', { class: 'seg' }, [['arr', 'при прибытии на предыдущую'], ['dep', 'при отправлении'], ['both', 'оба раза']].map(([v, t2]) => h('button', { class: (l.passAt || 'arr') === v ? 'on' : '', onclick: () => { l.passAt = v; save(); PL.rebuild(); api.re(); } }, t2))));
     }
   });
 }
@@ -257,13 +259,19 @@ function routeMenu(r, api) {
   m.push({ label: 'Удалить маршрут', danger: 1, do: () => confirmBox('Удалить маршрут «' + r.name + '»? Звуки останутся.', () => { S.routes = S.routes.filter(x => x !== r); save(); PL.load(); UI.pop(); }) });
   menu(r.name, m);
 }
-function listToBuild(r) {
+/** Маршрут-список → линия + маршрут по станциям. Возвращает новый маршрут или null */
+function makeBuildFromList(r) {
   const res = INF.lineFromList(r, clip);
-  if (res.line.stations.length < 2) { toast('Не получилось распознать остановки (нужны подписи «Отпр. …» / «Приб. …»)'); return; }
+  if (res.line.stations.length < 2) { toast('Не получилось распознать станции (нужны подписи «Отпр. …» / «Приб. …»)'); return null; }
   res.line.color = r.color || res.line.color;
   S.lines.push(res.line);
-  const nr = { id: INF.uid(), mode: 'build', name: r.name + ' (кольцо)', line: res.line.id, path: res.path, rules: res.rules.concat(INF.clone(r.rules || [])), inserts: [] };
+  const nr = { id: INF.uid(), mode: 'build', name: r.name + ' (по станциям)', line: res.line.id, path: res.path, rules: res.rules.concat(INF.clone(r.rules || [])), inserts: [], from: r.id };
   S.routes.push(nr); save();
+  return nr;
+}
+function listToBuild(r) {
+  const nr = makeBuildFromList(r); if (!nr) return;
+  const res = { line: lineById(nr.line) };
   UI.pop(); editRoute(nr);
   openSheet('Готово', b => b.append(h('p', null, 'Создана линия «' + res.line.name + '» (' + res.line.stations.length + ' остановок) и маршрут-кольцо. Перевод приблизительный: послушай предпросмотр ▶ и поправь шаблоны в линии.'), h('p', { class: 'dim small' }, 'Исходный маршрут-список остался как был.'), h('button', { class: 'btn pri wide', onclick: () => UI.pop() }, 'Понятно')));
 }
