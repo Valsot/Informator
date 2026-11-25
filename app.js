@@ -140,6 +140,7 @@ const au = $('#au');
 const PL = {
   route: null, dir: 0, anns: [], idx: 0, playing: null, queue: [], timer: 0, nowLabel: '',
   load() {
+    this.lastKey = null;
     this.route = routeById(S.set.route) || S.routes[0] || null;
     if (!this.route) { this.anns = []; return; }
     S.set.route = this.route.id;
@@ -182,7 +183,7 @@ const PL = {
   async playAnn(i) {
     const a = this.anns[i]; if (!a) return;
     this.stop(true);
-    this.playing = a.key;
+    this.playing = a.key; this.lastKey = a.key;
     (a.then || []).forEach(t => this.queue.push({ segs: t.segs, label: t.label, delay: t.delay }));
     await this.playSegs(a.segs, a.label);
   },
@@ -389,7 +390,11 @@ function viewPlayer() {
     if (a.passes && a.passes.length) {
       // проезжаемые без остановки — после объявления об отправлении
     }
-    const cls = ['an', a.kind, a.off ? 'off' : '', i === nextI ? 'cur' : '', PL.playing === a.key ? 'play' : ''].join(' ');
+    // уже объявленные — бледнее; текущее (звучит или прозвучало последним) — рамка; следующее — рамка с уголком ▶
+    const curKey = PL.playing || PL.lastKey;
+    const isCur = a.key === curKey, isNext = i === nextI && !isCur;
+    const past = !isCur && !isNext && nextI >= 0 && i < nextI;
+    const cls = ['an', a.kind, a.off ? 'off' : '', isCur ? 'cur' : '', isNext ? 'nxt' : '', past ? 'past' : '', PL.playing === a.key ? 'play' : ''].join(' ');
     const row = h('div', { class: cls },
       h('div', { class: 'rail' }, h('div', { class: 'mk' })),
       h('div', { class: 'body', onclick: () => { PL.idx = i; PL.savePos(); UI.refreshPlayer(); } },
@@ -402,7 +407,7 @@ function viewPlayer() {
   });
   root.append(diag);
   if (!PL.anns.length) root.append(h('div', { class: 'card empty' }, 'В этом направлении нет объявлений. Открой редактор маршрута (✎).'));
-  setTimeout(() => { const c = $('.an.cur'); if (c && UI.scrollCur) { c.scrollIntoView({ block: 'center' }); UI.scrollCur = false; } }, 0);
+  setTimeout(() => { const c = $('.an.nxt') || $('.an.cur'); if (c && UI.scrollCur) { c.scrollIntoView({ block: 'center' }); UI.scrollCur = false; } }, 0);
   return root;
 }
 function longPress(el, fn) {

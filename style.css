@@ -171,3 +171,12 @@ input[type=checkbox]{accent-color:var(--rc);width:20px;height:20px}
 .btn svg{width:20px;height:20px;flex:none}
 .btn.sm svg{width:18px;height:18px}
 .qbtn svg,.li svg{flex:none}
+/* следующее: рамка с уголком ▶ вместо полоски */
+.an.nxt .body{background:var(--p2);position:relative;padding-left:22px}
+.an.cur .body,.an.nxt .body{margin:2px 0}
+.an.nxt .body:before{content:"";position:absolute;left:0;top:0;bottom:0;width:16px;background:var(--rc);clip-path:polygon(0 0,46% 0,100% 50%,46% 100%,0 100%,54% 50%);border-radius:12px 0 0 12px}
+.an.nxt .lb{color:var(--tx)}
+/* уже объявленные */
+.an.past .body{opacity:.45}
+.an.past .mk{border-color:var(--dim2)}
+.an.past.dep .mk{background:var(--dim2)}
