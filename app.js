@@ -1,5 +1,6 @@
 /* Информатор — ядро: хранилище, звук, пульт, импорт, банк звуков */
 'use strict';
+const APP_VERSION = '5 · 25.11.2026';
 
 /* ================= DOM-помощники ================= */
 // append(null) в DOM печатает «null» — в этом приложении пустые значения просто пропускаем
@@ -716,7 +717,7 @@ function viewMore() {
     h('p', null, h('b', null, 'Пульт. '), 'Большая кнопка ▶ объявляет следующее и сдвигает указатель — как «>» в старом Информаторе. ⏮ ⏭ двигают указатель без звука. Тап по строке — сделать её следующей, ▶ справа — объявить сразу, долгое нажатие — меню (служебное после, без остановки…).'),
     h('p', null, h('b', null, 'Экран блокировки и гарнитура. '), 'Кнопка «следующий трек» объявляет следующее, «предыдущий» — шаг назад.'),
     h('p', null, h('b', null, 'Линия '), '— справочник остановок со звуками названий, фразами и шаблонами объявлений. ', h('b', null, 'Маршрут '), '— кольцо остановок по линии: отметки «конечная» делят его на направления. ', h('b', null, 'Регулярные '), '— добавки к каждой N-й остановке (их можно включать на ходу). ', h('b', null, 'Служебные '), '— отдельные сообщения: кнопкой в пульте или с привязкой «после объявления».'),
-    h('p', { class: 'dim small' }, 'Основано на «Информаторе» (ista011, 2015; alTerr, 2018) — формат пакетов .zip/.cfg поддерживается как есть.')));
+    h('p', { class: 'dim small' }, 'Версия ' + APP_VERSION + '. Основано на «Информаторе» (ista011, 2015; alTerr, 2018) — формат пакетов .zip/.cfg поддерживается как есть.')));
   root.append(h('button', { class: 'btn danger wide', style: { marginTop: '20px' }, onclick: () => confirmBox('Стереть все маршруты, линии и звуки с этого устройства?', async () => { for (const k of await DB.keys('blobs')) await DB.del('blobs', k); S = DEF(); await DB.put('kv', 'state', S); PL.load(); UI.go('player'); }, 'Стереть всё') }, 'Стереть всё'));
   return root;
 }
@@ -727,5 +728,10 @@ function viewMore() {
   catch (e) { S = DEF(); toast('Хранилище недоступно: ' + e.message, 5000); }
   S = Object.assign(DEF(), S); S.set = Object.assign(DEF().set, S.set);
   PL.load(); UI.scrollCur = true; UI.render();
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    // новая версия приложения → один раз перезагрузить страницу
+    const had = !!navigator.serviceWorker.controller; let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded) { reloaded = true; location.reload(); } });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => { });
+  }
 })();
