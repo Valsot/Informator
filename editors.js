@@ -172,7 +172,7 @@ function editLine(l) {
     b.append(h('div', { class: 'btns' },
       h('button', { class: 'btn sm', onclick: () => prompt2('Название остановки', '', v => { if (v.trim()) { l.stations.push({ id: INF.uid(), name: v.trim(), clips: {} }); save(); api.re(); } }) }, ic('add'), 'Остановка'),
       h('button', { class: 'btn sm', onclick: () => prompt2('Остановки — по одной в строке', '', v => { v.split(/\r?\n/).map(x => x.trim()).filter(Boolean).forEach(n => l.stations.push({ id: INF.uid(), name: n, clips: {} })); save(); api.re(); }, { multi: 1, ph: 'Боровая\nКупчино\nШушары' }) }, 'Списком…'),
-      h('button', { class: 'btn sm', onclick: () => autoMatch(l, api) }, 'Подобрать звуки по названиям')));
+      h('button', { class: 'btn sm', onclick: () => autoMatch(l, api) }, 'Подобрать звуки станций и фраз')));
 
     // фразы
     b.append(h('h2', null, 'Фразы'));
@@ -194,6 +194,7 @@ function editLine(l) {
     for (const [k, t, d] of T) {
       l.tpl[k] = l.tpl[k] || [];
       b.append(...[h('div', { class: 'tplname' }, t), d ? h('div', { class: 'tiny dim', style: { margin: '-4px 2px 6px' } }, d) : null].filter(Boolean), itemsEditor(l.tpl[k], { line: l, tokens: true, onChange: () => PL.rebuild() }));
+      if (k === 'start') b.append(h('div', { class: 'tiny dim', style: { margin: '8px 2px 4px' } }, 'Когда звучит начальное'), h('div', { class: 'seg' }, [['sep', 'отдельным объявлением'], ['dep', 'вместе с первым отправлением']].map(([v, t2]) => h('button', { class: (l.startWith || 'sep') === v ? 'on' : '', onclick: () => { l.startWith = v; save(); PL.rebuild(); api.re(); } }, t2))));
       if (k === 'pass') b.append(h('div', { class: 'tiny dim', style: { margin: '8px 2px 4px' } }, 'Когда объявлять проезд'), h('div', { class: 'seg' }, [['arr', 'при прибытии на предыдущую'], ['dep', 'при отправлении'], ['both', 'оба раза']].map(([v, t2]) => h('button', { class: (l.passAt || 'arr') === v ? 'on' : '', onclick: () => { l.passAt = v; save(); PL.rebuild(); api.re(); } }, t2))));
     }
   });
@@ -235,6 +236,14 @@ function autoMatch(l, api) {
     const hit = cands.find(x => x.raw === low || x.raw.replace(/^\d+[_\- ]*/, '') === low) || cands.find(x => x.n && x.n === key) || cands.find(x => x.n.length >= 5 && key.length >= 5 && (x.n.startsWith(key) || key.startsWith(x.n)));
     if (hit) { s.clips.name = hit.c.id; n++; }
   }
+  // фразы без звука: ключ фразы ↔ имя файла без номера (krome ↔ 00_krome.mp3)
+  const PH = { krome: /krom/i, sost: /^(s_?ost|sostanov.*)$/i };
+  for (const [k, p] of Object.entries(l.phrases || {})) {
+    if (p.clip) continue;
+    const re = PH[k] || new RegExp('^' + k.replace(/[^a-z0-9_]/gi, '') + '$', 'i');
+    const hit = cands.find(x => re.test(INF.stem(x.c.name).replace(/^\d+[_\- ]*/, '')));
+    if (hit) { p.clip = hit.c.id; n++; }
+  }
   save(); api.re(); toast(n ? 'Назначено звуков: ' + n + '. Проверь на слух ▶' : 'Совпадений не нашлось');
 }
 
@@ -261,7 +270,7 @@ function routeMenu(r, api) {
 }
 /** Маршрут-список → линия + маршрут по станциям. Возвращает новый маршрут или null */
 function makeBuildFromList(r) {
-  const res = INF.lineFromList(r, clip);
+  const res = INF.lineFromList(r, clip, Object.values(S.clips));
   if (res.line.stations.length < 2) { toast('Не получилось распознать станции (нужны подписи «Отпр. …» / «Приб. …»)'); return null; }
   res.line.color = r.color || res.line.color;
   S.lines.push(res.line);

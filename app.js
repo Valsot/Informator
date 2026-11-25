@@ -383,7 +383,7 @@ function viewPlayer() {
     })));
   }
   // схема
-  root.append(h('h2', { class: 'row' }, h('span', { class: 'grow' }, 'Объявления'), h('button', { class: 'btn sm', onclick: () => stopsSheet(R) }, '⊘ Станции без остановки')));
+  root.append(h('h2', { class: 'row' }, h('span', { class: 'grow' }, 'Объявления'), h('button', { class: 'btn sm', onclick: () => stopsSheet(R) }, '⊘ Станции и конечные')));
   const diag = h('div', { class: 'diag' });
   PL.anns.forEach((a, i) => {
     if (a.passes && a.passes.length) {
@@ -435,7 +435,7 @@ function annMenu(a, i) {
 function stopsSheet(R) {
   if (R.mode === 'list') {
     const done = S.routes.find(x => x.from === R.id);
-    openSheet('Станции без остановки', b => {
+    openSheet('Станции и конечные', b => {
       b.append(h('p', null, 'Этот маршрут импортирован списком готовых объявлений, в нём можно только выключать отдельные записи.'),
         h('p', null, 'Чтобы исключать именно станции, а объявления перестраивались сами («следующая станция» перескакивает через пропуск, добавляется «…проследует без остановки», в электричке — «кроме…»), нужен маршрут по станциям. Программа соберёт его из этого списка: распознает станции и шаблоны объявлений.'),
         h('p', { class: 'dim small' }, 'Исходный маршрут-список останется как был.'),
@@ -446,23 +446,54 @@ function stopsSheet(R) {
   }
   const line = lineById(R.line); if (!line) return;
   const ui = stopsSheet.ui || (stopsSheet.ui = { both: true });
-  openSheet('Станции без остановки', (b, api) => {
-    b.append(h('div', { class: 'seg', style: { marginBottom: '10px' } }, [[true, 'в обе стороны'], [false, 'только в этом направлении']].map(([v, t]) => h('button', { class: ui.both === v ? 'on' : '', onclick: () => { ui.both = v; api.re(); } }, t))));
-    const dirs = INF.routeDirs(R, line), R2 = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+  const R2 = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+  // укороченный рейс: kind 'from' | 'to'; в обе стороны — зеркально в других направлениях
+  const setTrim = (di, kind, x) => {
+    const dirs = INF.routeDirs(Object.assign({}, R, { trim: {} }), line);
+    R.trim = R.trim || {};
+    const put = (k, kd, e) => {
+      const full = dirs[k].full, i = full.findIndex(y => y.e === e);
+      const t = R.trim[k] = R.trim[k] || {};
+      if (i < 0) return;
+      if ((kd === 'from' && i === 0) || (kd === 'to' && i === full.length - 1)) delete t[kd]; else t[kd] = e.id;
+      if (!t.from && !t.to) delete R.trim[k];
+    };
+    put(di, kind, x.e);
+    if (ui.both) dirs.forEach((d, k) => {
+      if (k === di) return;
+      const m = d.full.find(y => y.e.st === x.e.st);
+      if (m) put(k, kind === 'to' ? 'from' : 'to', m.e);
+    });
+    save(); PL.rebuild(); UI.refreshPlayer();
+  };
+  openSheet('Станции и конечные', (b, api) => {
+    b.append(h('div', { class: 'seg', style: { marginBottom: '6px' } }, [[true, 'в обе стороны'], [false, 'только в этом направлении']].map(([v, t]) => h('button', { class: ui.both === v ? 'on' : '', onclick: () => { ui.both = v; api.re(); } }, t))));
+    b.append(h('div', { class: 'tiny dim', style: { margin: '0 2px 4px' } }, 'Тумблер — останавливаться или проезжать. Тап по названию — сделать конечной или начальной (укороченный рейс).'));
+    const dirs = INF.routeDirs(R, line);
     dirs.forEach((d, di) => {
-      b.append(h('h2', null, d.ring ? '↻ Кольцевой' : R2[di] + ' → ' + d.seq[d.seq.length - 1].st.name));
-      b.append(h('div', { class: 'list' }, d.seq.map((x, i) => {
-        const term = !d.ring && (i === 0 || i === d.seq.length - 1);
-        return h('div', { class: 'li', style: { minHeight: '46px', padding: '6px 14px' } },
-          h('div', { class: 'grow' }, h('div', { class: 'ell', style: { opacity: x.e.skip ? .5 : 1, textDecoration: x.e.skip ? 'line-through' : '' } }, x.st.name), term ? h('div', { class: 'tiny dim' }, 'конечная') : null),
-          term ? null : sw(!x.e.skip, v => {
+      const inSeq = new Map(d.seq.map((x, i) => [x.e, i]));
+      const full = d.ring ? d.seq : d.full;
+      b.append(h('h2', { class: 'row' }, h('span', { class: 'grow' }, d.ring ? '↻ Кольцевой' : R2[di] + ' → ' + d.seq[d.seq.length - 1].st.name),
+        d.trimmed ? h('button', { class: 'btn sm ghost', onclick: () => { delete R.trim[di]; if (ui.both) R.trim = {}; save(); PL.rebuild(); api.re(); } }, '✕ весь маршрут') : null));
+      b.append(h('div', { class: 'list' }, full.map(x => {
+        const i = inSeq.has(x.e) ? inSeq.get(x.e) : -1;
+        const out = !d.ring && i < 0;
+        const end = !d.ring && (i === 0 || i === d.seq.length - 1);
+        const skip = !out && !end && x.e.skip;
+        return h('div', { class: 'li', style: { minHeight: '46px', padding: '6px 14px', opacity: out ? .38 : 1 } },
+          h('div', { class: 'grow', style: { cursor: d.ring ? 'default' : 'pointer' }, onclick: d.ring ? null : () => menu(x.st.name, [
+            { label: '⤓ Конечная здесь — рейс до «' + x.st.name + '»', do: () => { setTrim(di, 'to', x); api.re(); } },
+            { label: '⤒ Начало рейса здесь', do: () => { setTrim(di, 'from', x); api.re(); } }]) },
+            h('div', { class: 'ell', style: { textDecoration: skip ? 'line-through' : '', opacity: skip ? .5 : 1 } }, x.st.name),
+            out ? h('div', { class: 'tiny dim' }, 'рейс сюда не идёт') : end ? h('div', { class: 'tiny', style: { color: 'var(--rc)' } }, i === 0 ? 'начальная' : 'конечная') : null),
+          out || end ? null : sw(!x.e.skip, v => {
             const targets = ui.both ? (R.path || []).filter(e => e.st === x.e.st && !e.term) : [x.e];
             targets.forEach(e => e.skip = !v);
             save(); PL.rebuild(); api.re();
           }));
       })));
     });
-    b.append(h('div', { class: 'dim tiny', style: { marginTop: '10px' } }, 'Подробнее — в редакторе маршрута ✎ и в шаблонах линии («Проезд без остановки», «Начальное»).'));
+    b.append(h('div', { class: 'dim tiny', style: { marginTop: '10px' } }, 'Объявления перестраиваются сами: «следующая станция», «до станции …», «кроме…», проезд без остановки. Шаблоны — в линии.'));
   });
 }
 function chooseRoute() {

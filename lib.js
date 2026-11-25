@@ -207,7 +207,15 @@
     for (let k = 0; k < T.length; k++) {
       const a = T[k], b = T[(k + 1) % T.length], arr = [];
       for (let i = a; arr.length <= n; i = (i + 1) % n) { arr.push(P[i]); if (i === b && arr.length > 1) break; }
-      dirs.push({ idx: k, ring: false, seq: mkSeq(arr, false) });
+      // укороченный рейс: своя начальная/конечная внутри направления
+      const tr = (route.trim || {})[k];
+      let part = arr, trimmed = false;
+      if (tr) {
+        let a0 = tr.from ? arr.findIndex(x => x.e.id === tr.from) : 0, b0 = tr.to ? arr.findIndex(x => x.e.id === tr.to) : arr.length - 1;
+        if (a0 < 0) a0 = 0; if (b0 < 0) b0 = arr.length - 1;
+        if (b0 > a0 && (a0 > 0 || b0 < arr.length - 1)) { part = arr.slice(a0, b0 + 1); trimmed = true; }
+      }
+      dirs.push({ idx: k, ring: false, trimmed, full: arr, seq: mkSeq(part, false) });
     }
     return dirs;
   };
@@ -317,9 +325,10 @@
       (a.extra = a.extra || []).push('проезд: ' + list.map(s => s.name).join(', '));
     };
     const eid = i => seq[stopIdx[i]].e.id;
+    let startAnn = null;
     if (T.start && T.start.length && !circ) {
       const many = skips.length > inter / 2;
-      mk('start', 'До ' + stops[n - 1].name, !skips.length ? 'со всеми остановками' : many ? 'с остановками: ' + base.stops.map(s => s.name).join(', ') : 'кроме: ' + skips.map(s => s.name).join(', '), T.start, { cur: stops[0], next: stops[1], passes: passesAfter[0] }, eid(0));
+      startAnn = mk('start', 'До ' + stops[n - 1].name, !skips.length ? 'со всеми остановками' : many ? 'с остановками: ' + base.stops.map(s => s.name).join(', ') : 'кроме: ' + skips.map(s => s.name).join(', '), T.start, { cur: stops[0], next: stops[1], passes: passesAfter[0] }, eid(0));
     }
     const nx = i => circ ? stops[(i + 1) % n] : stops[i + 1];
     const pv = i => circ ? stops[(i - 1 + n) % n] : stops[i - 1];
@@ -330,6 +339,13 @@
       d.passes = passesAfter[i].map(s => s.name);
       // объявление о проезде: при прибытии на предыдущую остановку, а с начальной — при отправлении
       if (passAt !== 'arr' || (i === 0 && !circ)) addPass(d, passesAfter[i]);
+      // начальное «вместе с первым отправлением» — одной записью
+      if (i === 0 && startAnn && line.startWith === 'dep') {
+        anns.splice(anns.indexOf(startAnn), 1);
+        d.segs = startAnn.segs.concat([{ pause: 400 }], d.segs);
+        d.warn = startAnn.warn.concat(d.warn);
+        (d.extra = d.extra || []).unshift(startAnn.label.toLowerCase() + ', ' + startAnn.sub);
+      }
       const j = circ ? (i + 1) % n : i + 1;
       const at = stops[j];
       if (!circ && j === n - 1) mk('last', 'Приб. ' + at.name, 'конечная', T.last && T.last.length ? T.last : T.arr, { cur: at, next: null, prev: cur }, eid(j));
@@ -395,7 +411,7 @@
   }
 
   /** Сделать линию из маршрута-списка (импортированного .cfg). Эвристика по подписям «Отпр. X» / «Приб. X». */
-  INF.lineFromList = function (route, clipById) {
+  INF.lineFromList = function (route, clipById, allClips) {
     const isPh = id => { const c = clipById(id); return c && /^00_/.test(c.name); };
     const phKey = id => { const c = clipById(id); return c ? INF.stem(c.name).replace(/^00_/, '') : 'ph'; };
     const stations = [], byName = new Map();
@@ -521,12 +537,15 @@
       phrases.bezost = phrases.bezost || { label: INF.presets.metro.phrases.bezost, clip: null };
       tpl.pass = INF.clone(INF.presets.metro.tpl.pass);
     } else tpl.pass = [];
+    // звуки «кроме» / «с остановками» могут лежать в пакете, хотя старый .cfg их не использует
+    const packs = new Set(); route.dirs.forEach(d => d.forEach(a => a.items.forEach(x => { const c = x.c && clipById(x.c); if (c && c.pack) packs.add(c.pack); })));
+    const findPh = re => { const c = (allClips || []).find(c => packs.has(c.pack) && re.test(INF.stem(c.name).replace(/^\d+_/, ''))); return c ? c.id : null; };
     const di = tpl.start.findIndex(x => x.t === 'dest');
     if (di >= 0 && !tpl.start.some(x => x.cond)) {
       tpl.start = tpl.start.slice(0, di + 1).concat(tpl.start.slice(di + 1).map(x => Object.assign({}, x, { cond: 'noSkips' })),
         [{ p: 'krome', cond: 'fewSkips' }, { t: 'skips', s: 'name', cond: 'fewSkips' }, { p: 'sost', cond: 'manySkips' }, { t: 'stops', s: 'name', cond: 'manySkips' }]);
-      phrases.krome = phrases.krome || { label: INF.presets.train.phrases.krome, clip: null };
-      phrases.sost = phrases.sost || { label: INF.presets.train.phrases.sost, clip: null };
+      phrases.krome = phrases.krome || { label: INF.presets.train.phrases.krome, clip: findPh(/krom/i) };
+      phrases.sost = phrases.sost || { label: INF.presets.train.phrases.sost, clip: findPh(/^(s_?ost|sostanov.*)$/i) };
     }
     return { line: { id: INF.uid(), name: route.line || route.name, city: route.city || '', type: route.type || '', color: route.color || '#d6083b', stations, phrases, tpl, passAt }, rules, path };
   };
