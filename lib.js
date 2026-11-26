@@ -233,6 +233,8 @@
     if (!st) return null;
     const c = st.clips || {};
     const d = '@' + (dir + 1);
+    // «имя без „следующая“»: если отдельно не записано — звук прибытия («Удельная»)
+    if (slot === 'imya' && !c['imya' + d] && !c.imya && (c['prib' + d] || c.prib)) return c['prib' + d] || c.prib;
     // конечная без своей записи: лучше «Станция X» (prib), чем «Следующая станция X» (name)
     if (fb && slot === 'last' && !c[slot + d] && !c[slot] && (c['prib' + d] || c.prib)) return c['prib' + d] || c.prib;
     return c[slot + d] || c[slot] || (fb && slot !== 'name' ? (c['name' + d] || c.name) : null) || null;
