@@ -544,8 +544,27 @@ function editInsert(r, x, api) {
 }
 
 /* ================= Нарезка записи ================= */
-function openSlicer() {
-  const st = { buf: null, mono: null, file: null, name: '', segs: [], sel: -1, zoom: 1, cursor: 0, db: -42, minSil: 450, pack: '', peaks: null, pw: 0, src: null };
+function openSlicer(srcClip) {
+  const st = { buf: null, mono: null, file: null, name: '', segs: [], sel: -1, zoom: 1, cursor: 0, db: -42, minSil: 450, pack: '', peaks: null, pw: 0, src: null, blobId: null, offset: 0 };
+  const useBuffer = (buf, meta) => {
+    const mono = new Float32Array(buf.length);
+    for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels; }
+    Object.assign(st, { buf, mono, file: null, blobId: null, offset: 0, pack: '', pw: 0 }, meta);
+    split();
+  };
+  /** Взять звук из банка: режем тот же файл, ничего не копируя */
+  const loadClip = async (id, api) => {
+    const c = clip(id); if (!c) return;
+    toast('Декодирую…', 5000);
+    try {
+      const full = await AE.buffer(c.blob), r = full.sampleRate;
+      const a = Math.max(0, Math.floor((c.start || 0) * r)), e = Math.min(full.length, c.end != null ? Math.floor(c.end * r) : full.length);
+      const buf = AE.ac().createBuffer(full.numberOfChannels, Math.max(1, e - a), r);
+      for (let ch = 0; ch < full.numberOfChannels; ch++) buf.copyToChannel(full.getChannelData(ch).subarray(a, e), ch);
+      useBuffer(buf, { blobId: c.blob, offset: a / r, name: INF.stem(c.name), pack: c.pack });
+      api.re(); toast('Нашлось кусочков: ' + st.segs.length);
+    } catch (er) { toast('Не удалось открыть звук: ' + er.message, 4000); }
+  };
   const playRegion = (a, b2) => {
     AE.stopPreview();
     const ac = AE.ac(), s = ac.createBufferSource(), g = ac.createGain(); g.gain.value = S.set.vol;
@@ -563,14 +582,15 @@ function openSlicer() {
             toast('Декодирую…', 5000);
             try {
               const buf = await AE.ac().decodeAudioData(await file.arrayBuffer());
-              const mono = new Float32Array(buf.length);
-              for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels; }
-              Object.assign(st, { buf, mono, file, name: INF.stem(file.name), pack: '' });
-              split(); api.re(); toast('Нашлось кусочков: ' + st.segs.length);
+              useBuffer(buf, { file, name: INF.stem(file.name) });
+              api.re(); toast('Нашлось кусочков: ' + st.segs.length);
             } catch (e) { toast('Не удалось прочитать файл: ' + e.message, 4000); }
           };
           f.click();
-        } }, ic('upload'), 'Выбрать запись')));
+        } }, ic('upload'), 'Файл с телефона'),
+        h('button', { class: 'btn wide', style: { marginTop: '8px' }, onclick: () => pickClip(id => loadClip(id, api), 'Что нарезать') }, '♪ Из звуков программы'),
+        h('p', { class: 'dim small', style: { marginTop: '10px' } }, 'Из звуков программы можно взять любой импортированный файл или уже нарезанный кусочек — например, вырезать из «Поезд следует до станции Автово» отдельно «Автово». Новые кусочки ссылаются на тот же файл, место на телефоне не тратится.')));
+      if (srcClip && !st.tried) { st.tried = true; loadClip(srcClip, api); }
       return;
     }
     const dur = st.buf.duration;
@@ -671,9 +691,10 @@ function openSlicer() {
       if (!st.segs.length) { toast('Нечего сохранять'); return; }
       let pack = S.packs.find(p => p.id === st.pack);
       if (!pack) { pack = { id: INF.uid(), name: st.name }; S.packs.push(pack); }
-      const blobId = INF.uid();
-      await DB.put('blobs', blobId, st.file);
-      st.segs.forEach((s, i) => { const id = INF.uid(); S.clips[id] = { id, name: (s.name.trim() || st.name + '_' + (i + 1)), pack: pack.id, blob: blobId, start: +s.start.toFixed(3), end: +s.end.toFixed(3), dur: s.end - s.start }; });
+      let blobId = st.blobId;
+      if (!blobId) { blobId = INF.uid(); await DB.put('blobs', blobId, st.file); }
+      const off = st.offset || 0;
+      st.segs.forEach((s, i) => { const id = INF.uid(); S.clips[id] = { id, name: (s.name.trim() || st.name + '_' + (i + 1)), pack: pack.id, blob: blobId, start: +(off + s.start).toFixed(3), end: +(off + s.end).toFixed(3), dur: s.end - s.start }; });
       await DB.put('kv', 'state', S);
       bankUI.open.add(pack.id);
       toast('Сохранено звуков: ' + st.segs.length + ' в «' + pack.name + '»');

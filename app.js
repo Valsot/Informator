@@ -1,6 +1,6 @@
 /* Информатор — ядро: хранилище, звук, пульт, импорт, банк звуков */
 'use strict';
-const APP_VERSION = '8 · 26.11.2026';
+const APP_VERSION = '9 · 26.11.2026';
 
 /* ================= DOM-помощники ================= */
 // append(null) в DOM печатает «null» — в этом приложении пустые значения просто пропускаем
@@ -679,6 +679,7 @@ function clipRow(c, onPick) {
     ib('play', () => AE.preview([{ c: c.id }]), 'Слушать'),
     h('div', { class: 'grow' }, h('div', { class: 'ell' }, INF.stem(c.name)), h('div', { class: 'tiny dim' }, [c.start != null ? 'нарезка' : '', c.dur ? fmtT(c.dur) : ''].filter(Boolean).join(' · '))),
     onPick ? null : ib('more', () => menu(INF.stem(c.name), [
+      { label: '✂ Нарезать на кусочки', do: () => openSlicer(c.id) },
       { label: 'Переименовать', do: () => prompt2('Название звука', INF.stem(c.name), v => { if (v.trim()) { c.name = v.trim() + (/\.[a-z0-9]+$/i.exec(c.name) || [''])[0]; save(); UI.render(); } }) },
       { label: 'Удалить', danger: 1, do: () => confirmBox('Удалить звук «' + INF.stem(c.name) + '»?', () => { delete S.clips[c.id]; gcBlobs(); save(); UI.render(); }) }])));
 }
