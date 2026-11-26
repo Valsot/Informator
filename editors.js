@@ -99,7 +99,7 @@ function pickStation(line, cb, title) {
 }
 
 /* ================= Редактор элементов объявления ================= */
-const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков', fewSkips: 'если пропусков не больше половины', manySkips: 'если пропусков больше половины', notManySkips: 'если пропусков нет или не больше половины', hasPasses: 'если до следующей проезд без остановки', noPasses: 'если до следующей проезда нет' };
+const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков', fewSkips: 'если пропусков не больше половины', manySkips: 'если пропусков больше половины', notManySkips: 'если пропусков нет или не больше половины', trimmed: 'если рейс укороченный', notTrimmed: 'если рейс до обычной конечной', hasPasses: 'если до следующей проезд без остановки', noPasses: 'если до следующей проезда нет' };
 function itemLabel(it, line) {
   if (it.pause) return '⏸ ' + (it.pause / 1000) + ' с';
   if (it.c) return '♪ ' + clipLabel(it.c);
@@ -194,10 +194,28 @@ function editLine(l) {
     for (const [k, t, d] of T) {
       l.tpl[k] = l.tpl[k] || [];
       b.append(...[h('div', { class: 'tplname' }, t), d ? h('div', { class: 'tiny dim', style: { margin: '-4px 2px 6px' } }, d) : null].filter(Boolean), itemsEditor(l.tpl[k], { line: l, tokens: true, onChange: () => PL.rebuild() }));
+      if (k === 'arr') b.append(h('div', { class: 'btns' }, h('button', { class: 'btn sm', onclick: () => addTrimmedDest(l, api) }, ic('add'), '«Поезд следует до…» при укороченном рейсе')));
       if (k === 'start') b.append(h('div', { class: 'tiny dim', style: { margin: '8px 2px 4px' } }, 'Когда звучит начальное'), h('div', { class: 'seg' }, [['sep', 'отдельным объявлением'], ['dep', 'вместе с первым отправлением']].map(([v, t2]) => h('button', { class: (l.startWith || 'sep') === v ? 'on' : '', onclick: () => { l.startWith = v; save(); PL.rebuild(); api.re(); } }, t2))));
       if (k === 'pass') b.append(h('div', { class: 'tiny dim', style: { margin: '8px 2px 4px' } }, 'Когда объявлять проезд'), h('div', { class: 'seg' }, [['arr', 'при прибытии на предыдущую'], ['dep', 'при отправлении'], ['both', 'оба раза']].map(([v, t2]) => h('button', { class: (l.passAt || 'arr') === v ? 'on' : '', onclick: () => { l.passAt = v; save(); PL.rebuild(); api.re(); } }, t2))));
     }
   });
+}
+/** Метро: на каждой станции «Поезд следует до станции X», только если рейс укороченный */
+function addTrimmedDest(l, api) {
+  const done = () => { save(); PL.rebuild(); api.re(); };
+  menu('Как записано «до станции…»', [
+    { label: 'Фраза «Поезд следует до станции» + название конечной отдельно', do: () => pickClip(id => {
+      l.phrases.dostm = { label: 'Поезд следует до станции', clip: id };
+      l.tpl.arr.push({ pause: 400, cond: 'trimmed' }, { p: 'dostm', cond: 'trimmed' }, { t: 'dest', s: 'imya', cond: 'trimmed' });
+      done();
+      openSheet('Добавлено', b => b.append(h('p', null, 'В конец «Прибытия» добавлено: «Поезд следует до станции» + {конечная}. Звучит, только когда рейс укороченный.'), h('p', null, 'Название конечной берётся из звука «имя без „следующая“». Назначь его станциям, где поезд может оборачиваться: Остановки → станция → «Другой звук» → «имя без „следующая“». Где звука нет — в пульте будет ⚠.'), h('button', { class: 'btn pri wide', onclick: () => UI.pop() }, 'Понятно')));
+    }, 'Звук «Поезд следует до станции»') },
+    { label: 'У каждой конечной своя запись целиком («Поезд следует до станции Автово»)', do: () => {
+      l.tpl.arr.push({ pause: 400, cond: 'trimmed' }, { t: 'dest', s: 'dost', cond: 'trimmed' });
+      done();
+      openSheet('Добавлено', b => b.append(h('p', null, 'В конец «Прибытия» добавлено: {конечная: «до станции…» целой фразой}. Звучит, только когда рейс укороченный.'), h('p', null, 'Назначь запись станциям, где поезд может оборачиваться: Остановки → станция → «Другой звук» → «„до станции …“ целой фразой».'), h('button', { class: 'btn pri wide', onclick: () => UI.pop() }, 'Понятно')));
+    } }
+  ]);
 }
 function colorRow(cur, set) {
   return h('div', { class: 'colorrow', style: { margin: '6px 0' } }, LINE_COLORS.map(c => h('button', { class: 'swatch' + (c === cur ? ' on' : ''), style: { background: c }, onclick: () => set(c) })), h('input', { type: 'color', value: cur || '#d6083b', onchange: e => set(e.target.value) }));

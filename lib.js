@@ -189,7 +189,7 @@
       }
     }
   };
-  INF.SLOTS = { name: 'название', imya: 'имя без «следующая»', otpr: 'при отправлении', prib: 'при прибытии', last: 'конечная', proezd: 'проезд без остановки (целой фразой)', perehod: 'переход', vyhod: 'выход к…' };
+  INF.SLOTS = { name: 'название', imya: 'имя без «следующая»', otpr: 'при отправлении', prib: 'при прибытии', last: 'конечная', dost: '«до станции …» целой фразой', proezd: 'проезд без остановки (целой фразой)', perehod: 'переход', vyhod: 'выход к…' };
 
   INF.clone = o => JSON.parse(JSON.stringify(o));
   /** Старые линии: «со всеми остановками» звучит и перед «кроме» (в пакетах «кроме» — отдельное слово) */
@@ -232,7 +232,10 @@
   function slotClip(st, slot, dir, fb) {
     if (!st) return null;
     const c = st.clips || {};
-    return c[slot + '@' + (dir + 1)] || c[slot] || (fb && slot !== 'name' ? (c['name@' + (dir + 1)] || c.name) : null) || null;
+    const d = '@' + (dir + 1);
+    // конечная без своей записи: лучше «Станция X» (prib), чем «Следующая станция X» (name)
+    if (fb && slot === 'last' && !c[slot + d] && !c[slot] && (c['prib' + d] || c.prib)) return c['prib' + d] || c.prib;
+    return c[slot + d] || c[slot] || (fb && slot !== 'name' ? (c['name' + d] || c.name) : null) || null;
   }
 
   /** Раскрыть элементы в сегменты звука.
@@ -243,6 +246,8 @@
     fewSkips: c => (c.skips || []).length > 0 && (c.skips || []).length <= (c.inter || 0) / 2,
     manySkips: c => (c.skips || []).length > (c.inter || 0) / 2,
     notManySkips: c => (c.skips || []).length <= (c.inter || 0) / 2,
+    trimmed: c => !!c.trimmed,
+    notTrimmed: c => !c.trimmed,
     hasPasses: c => (c.passes || []).length > 0,
     noPasses: c => !(c.passes || []).length
   };
@@ -272,7 +277,7 @@
         if (!st) continue;
         const c = slotClip(st, it.s || 'name', ctx.dir, it.fb);
         if (c) out.push({ c });
-        else if ((it.s || 'name') === 'name' || it.fb || it.t === 'pass') warn && warn('у «' + st.name + '» нет звука (' + (INF.SLOTS[it.s] || it.s) + ')');
+        else if (!['perehod', 'vyhod', 'proezd'].includes(it.s)) warn && warn('у «' + st.name + '» нет звука (' + (INF.SLOTS[it.s] || it.s) + ')');
       }
     }
     return out;
@@ -301,7 +306,7 @@
   };
 
   /** Собрать объявления для последовательности остановок одного направления */
-  function annsForSeq(seq, ring, dir, line, tag) {
+  function annsForSeq(seq, ring, dir, line, tag, trimmed) {
     const stopIdx = []; seq.forEach((x, i) => { if (x.stop) stopIdx.push(i); });
     const stops = stopIdx.map(i => seq[i].st);
     const skips = seq.filter(x => !x.stop).map(x => x.st);
@@ -311,7 +316,7 @@
     // проезжаемые без остановки после i-й остановки (до следующей)
     const passesAfter = stops.map((s, i) => { const out = []; const b1 = i + 1 < n ? stopIdx[i + 1] : seq.length; for (let k = stopIdx[i] + 1; k < b1; k++) out.push(seq[k].st); return out; });
     const inter = Math.max(0, seq.length - 2);
-    const base = { line, dir, skips, inter, stops: circ ? stops : stops.slice(1, -1), first: stops[0], dest: circ ? null : stops[n - 1], passes: [] };
+    const base = { line, dir, skips, inter, stops: circ ? stops : stops.slice(1, -1), first: stops[0], dest: circ ? null : stops[n - 1], passes: [], trimmed: !!trimmed };
     const passAt = line.passAt || 'arr';
     const anns = [];
     const mk = (kind, label, sub, items, ctx, eid) => {
@@ -415,8 +420,8 @@
     if (!line) return [];
     const dirs = INF.routeDirs(route, line);
     let anns;
-    if (dir === 'ring') anns = dirs.flatMap(d => annsForSeq(d.seq, d.ring, d.idx, line, d.idx + '/'));
-    else { const d = dirs[dir]; anns = d ? annsForSeq(d.seq, d.ring, d.idx, line, '') : []; }
+    if (dir === 'ring') anns = dirs.flatMap(d => annsForSeq(d.seq, d.ring, d.idx, line, d.idx + '/', d.trimmed));
+    else { const d = dirs[dir]; anns = d ? annsForSeq(d.seq, d.ring, d.idx, line, '', d.trimmed) : []; }
     return INF.applyRules(anns, route.rules, a => a.ctx || { line, dir: a.dir });
   }
 
