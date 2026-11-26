@@ -150,7 +150,7 @@
        {pause: 400}               — тишина, мс
        + необязательно cond: ключ из INF.COND
   */
-  INF.WHO = { cur: 'текущая', next: 'следующая', dest: 'конечная', first: 'начальная', prev: 'предыдущая', pass: 'проезжаемая (в объявлении о проезде)', skips: 'все без остановок (список)', stops: 'все остановки (список)', passes: 'проезжаемые до следующей (список)' };
+  INF.WHO = { cur: 'текущая', next: 'следующая', dest: 'конечная', first: 'начальная', prev: 'предыдущая', end: 'обычная конечная (при укороченном рейсе)', pass: 'проезжаемая (в объявлении о проезде)', skips: 'все без остановок (список)', stops: 'все остановки (список)', passes: 'проезжаемые до следующей (список)' };
 
   INF.presets = {
     train: {
@@ -167,13 +167,14 @@
     metro: {
       title: 'Метро',
       passAt: 'arr',
-      phrases: { gong: 'Гонг', dver: 'Осторожно, двери закрываются', paus: 'Пауза', uvst: 'Уважаемые пассажиры! Станцию', bezost: 'поезд проследует без остановки' },
+      phrases: { gong: 'Гонг', dver: 'Осторожно, двери закрываются', paus: 'Пауза', uvst: 'Уважаемые пассажиры! Станцию', bezost: 'поезд проследует без остановки', nedalshe: 'Поезд дальше не идёт, просьба освободить вагоны', vstoronu: 'В сторону станции', sledpoezd: 'поедет следующий поезд' },
       tpl: {
         start: [],
         dep: [{ p: 'gong' }, { p: 'dver' }, { t: 'next', s: 'otpr', fb: 1 }],
         arr: [{ p: 'gong' }, { t: 'cur', s: 'prib', fb: 1 }, { p: 'paus' }, { t: 'next', s: 'name' }],
         last: [{ p: 'gong' }, { t: 'cur', s: 'last', fb: 1 }],
-        pass: [{ p: 'uvst' }, { t: 'pass', s: 'imya' }, { p: 'bezost' }]
+        pass: [{ p: 'uvst' }, { t: 'pass', s: 'imya' }, { p: 'bezost' }],
+        lastTrim: [{ p: 'gong' }, { t: 'cur', s: 'imya' }, { pause: 400 }, { p: 'nedalshe' }, { pause: 400, cond: 'nextFull' }, { p: 'vstoronu', cond: 'nextFull' }, { t: 'end', s: 'imya', cond: 'nextFull' }, { p: 'sledpoezd', cond: 'nextFull' }]
       }
     },
     tram: {
@@ -250,6 +251,8 @@
     notManySkips: c => (c.skips || []).length <= (c.inter || 0) / 2,
     trimmed: c => !!c.trimmed,
     notTrimmed: c => !c.trimmed,
+    nextFull: c => !!c.trimmed && c.nextFull !== false,
+    noNextFull: c => !!c.trimmed && c.nextFull === false,
     hasPasses: c => (c.passes || []).length > 0,
     noPasses: c => !(c.passes || []).length
   };
@@ -308,7 +311,9 @@
   };
 
   /** Собрать объявления для последовательности остановок одного направления */
-  function annsForSeq(seq, ring, dir, line, tag, trimmed) {
+  function annsForSeq(seq, ring, dir, line, tag, opt) {
+    opt = opt || {};
+    const trimmed = !!opt.trimmed;
     const stopIdx = []; seq.forEach((x, i) => { if (x.stop) stopIdx.push(i); });
     const stops = stopIdx.map(i => seq[i].st);
     const skips = seq.filter(x => !x.stop).map(x => x.st);
@@ -318,7 +323,7 @@
     // проезжаемые без остановки после i-й остановки (до следующей)
     const passesAfter = stops.map((s, i) => { const out = []; const b1 = i + 1 < n ? stopIdx[i + 1] : seq.length; for (let k = stopIdx[i] + 1; k < b1; k++) out.push(seq[k].st); return out; });
     const inter = Math.max(0, seq.length - 2);
-    const base = { line, dir, skips, inter, stops: circ ? stops : stops.slice(1, -1), first: stops[0], dest: circ ? null : stops[n - 1], passes: [], trimmed: !!trimmed };
+    const base = { line, dir, skips, inter, stops: circ ? stops : stops.slice(1, -1), first: stops[0], dest: circ ? null : stops[n - 1], passes: [], trimmed, end: opt.end || null, nextFull: opt.nextFull };
     const passAt = line.passAt || 'arr';
     const anns = [];
     const mk = (kind, label, sub, items, ctx, eid) => {
@@ -365,7 +370,11 @@
       }
       const j = circ ? (i + 1) % n : i + 1;
       const at = stops[j];
-      if (!circ && j === n - 1) mk('last', 'Приб. ' + at.name, 'конечная', T.last && T.last.length ? T.last : T.arr, { cur: at, next: null, prev: cur }, eid(j));
+      if (!circ && j === n - 1) {
+        // укороченный рейс: своя «конечная» — «поезд дальше не идёт…», если шаблон задан
+        const lt = trimmed && T.lastTrim && T.lastTrim.length ? T.lastTrim : T.last && T.last.length ? T.last : T.arr;
+        mk('last', 'Приб. ' + at.name, trimmed ? 'конечная укороченного рейса' : 'конечная', lt, { cur: at, next: null, prev: cur }, eid(j));
+      }
       else {
         const a = mk('arr', 'Приб. ' + at.name, 'далее ' + nx(j).name, T.arr, { cur: at, next: nx(j), prev: cur, passes: passesAfter[j] }, eid(j));
         if (passAt !== 'dep') addPass(a, passesAfter[j]);
@@ -421,9 +430,10 @@
     const line = lines.find(l => l.id === route.line);
     if (!line) return [];
     const dirs = INF.routeDirs(route, line);
+    const dirOpt = d => ({ trimmed: d.trimmed, end: d.full ? d.full[d.full.length - 1].st : null, nextFull: route.nextFull !== false });
     let anns;
-    if (dir === 'ring') anns = dirs.flatMap(d => annsForSeq(d.seq, d.ring, d.idx, line, d.idx + '/', d.trimmed));
-    else { const d = dirs[dir]; anns = d ? annsForSeq(d.seq, d.ring, d.idx, line, '', d.trimmed) : []; }
+    if (dir === 'ring') anns = dirs.flatMap(d => annsForSeq(d.seq, d.ring, d.idx, line, d.idx + '/', dirOpt(d)));
+    else { const d = dirs[dir]; anns = d ? annsForSeq(d.seq, d.ring, d.idx, line, '', dirOpt(d)) : []; }
     return INF.applyRules(anns, route.rules, a => a.ctx || { line, dir: a.dir });
   }
 
@@ -580,6 +590,17 @@
     return new Blob([buf], { type: 'audio/wav' });
   };
 
+  /** «Следующая станция Ладожская» → участок «Ладожская»: первая пауза после minHead секунд.
+      data — моно, rate. → {start, end} или null */
+  INF.cutAfterHead = function (data, rate, opt) {
+    opt = opt || {};
+    const segs = INF.splitBySilence(data, rate, { db: opt.db || -36, minSil: opt.minSil || 70, minSeg: 0.05 * 1000 });
+    if (segs.length < 2) return null;
+    const head = opt.minHead != null ? opt.minHead : 0.6;
+    const k = segs.findIndex((s, i) => i > 0 && s.start >= head);
+    if (k < 1) return null;
+    return { start: segs[k].start, end: segs[segs.length - 1].end };
+  };
   /** Поиск пауз: data — Float32 моно, rate. → [{start,end}] в секундах */
   INF.splitBySilence = function (data, rate, opt) {
     const thr = Math.pow(10, (opt.db || -40) / 20), minSil = (opt.minSil || 400) / 1000, minSeg = (opt.minSeg || 250) / 1000;

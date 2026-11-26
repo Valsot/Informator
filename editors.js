@@ -99,7 +99,7 @@ function pickStation(line, cb, title) {
 }
 
 /* ================= Редактор элементов объявления ================= */
-const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков', fewSkips: 'если пропусков не больше половины', manySkips: 'если пропусков больше половины', notManySkips: 'если пропусков нет или не больше половины', trimmed: 'если рейс укороченный', notTrimmed: 'если рейс до обычной конечной', hasPasses: 'если до следующей проезд без остановки', noPasses: 'если до следующей проезда нет' };
+const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков', fewSkips: 'если пропусков не больше половины', manySkips: 'если пропусков больше половины', notManySkips: 'если пропусков нет или не больше половины', trimmed: 'если рейс укороченный', notTrimmed: 'если рейс до обычной конечной', nextFull: 'если объявляем про следующий поезд', noNextFull: 'если про следующий поезд не объявляем', hasPasses: 'если до следующей проезд без остановки', noPasses: 'если до следующей проезда нет' };
 function itemLabel(it, line) {
   if (it.pause) return '⏸ ' + (it.pause / 1000) + ' с';
   if (it.c) return '♪ ' + clipLabel(it.c);
@@ -172,7 +172,8 @@ function editLine(l) {
     b.append(h('div', { class: 'btns' },
       h('button', { class: 'btn sm', onclick: () => prompt2('Название остановки', '', v => { if (v.trim()) { l.stations.push({ id: INF.uid(), name: v.trim(), clips: {} }); save(); api.re(); } }) }, ic('add'), 'Остановка'),
       h('button', { class: 'btn sm', onclick: () => prompt2('Остановки — по одной в строке', '', v => { v.split(/\r?\n/).map(x => x.trim()).filter(Boolean).forEach(n => l.stations.push({ id: INF.uid(), name: n, clips: {} })); save(); api.re(); }, { multi: 1, ph: 'Боровая\nКупчино\nШушары' }) }, 'Списком…'),
-      h('button', { class: 'btn sm', onclick: () => autoMatch(l, api) }, 'Подобрать звуки станций и фраз')));
+      h('button', { class: 'btn sm', onclick: () => autoMatch(l, api) }, 'Подобрать звуки станций и фраз'),
+      h('button', { class: 'btn sm', onclick: () => cutNamesTool(l, api) }, ic('cut'), 'Названия из «Следующая станция…»')));
 
     // фразы
     b.append(h('h2', null, 'Фразы'));
@@ -190,14 +191,72 @@ function editLine(l) {
     b.append(h('div', { class: 'dim small' }, 'Из чего собирается объявление. {следующая} и т.п. подставляют звук остановки; «фразы» — звуки выше. Можно поставить условие «если есть пропуски» — например, «со всеми остановками, кроме {без остановок}».'));
     b.append(h('div', { class: 'btns' }, Object.entries(INF.presets).map(([k, p]) => h('button', { class: 'btn sm ghost', onclick: () => confirmBox('Заменить шаблоны на стандартные «' + p.title + '»? Фразы останутся.', () => { applyPreset(l, k); save(); api.re(); }, 'Заменить') }, '↺ ' + p.title))));
     l.tpl = l.tpl || {};
-    const T = [['start', 'Начальное — до отправления с конечной', 'Например: «Поезд следует до» {конечная} + «со всеми остановками» (если пропусков нет или не больше половины) + «кроме» {все без остановок} (если пропуски есть, но не больше половины) / «с остановками» {все остановки} (если пропусков больше половины). Пусто — не объявляется.'], ['dep', 'Отправление (двери закрываются)', ''], ['arr', 'Прибытие на остановку', ''], ['last', 'Прибытие на конечную', 'Пусто — как обычное прибытие.'], ['pass', 'Проезд без остановки — на каждую проезжаемую', 'Добавляется сам, когда до следующей остановки есть станции без остановки. {проезжаемая} — та, которую проезжаем. Если у станции записан звук «проезд без остановки (целой фразой)», вместо шаблона звучит он. Для электричек оставь пустым — там пропуски объявляются только в начальном.']];
+    const T = [['start', 'Начальное — до отправления с конечной', 'Например: «Поезд следует до» {конечная} + «со всеми остановками» (если пропусков нет или не больше половины) + «кроме» {все без остановок} (если пропуски есть, но не больше половины) / «с остановками» {все остановки} (если пропусков больше половины). Пусто — не объявляется.'], ['dep', 'Отправление (двери закрываются)', ''], ['arr', 'Прибытие на остановку', ''], ['last', 'Прибытие на конечную', 'Пусто — как обычное прибытие.'], ['lastTrim', 'Прибытие на конечную укороченного рейса', '«Удельная. Поезд дальше не идёт, просьба освободить вагоны. В сторону станции {обычная конечная} поедет следующий поезд». Часть про следующий поезд — с условием «если объявляем про следующий поезд»: её можно выключать в пульте. Пусто — как обычная конечная.'], ['pass', 'Проезд без остановки — на каждую проезжаемую', 'Добавляется сам, когда до следующей остановки есть станции без остановки. {проезжаемая} — та, которую проезжаем. Если у станции записан звук «проезд без остановки (целой фразой)», вместо шаблона звучит он. Для электричек оставь пустым — там пропуски объявляются только в начальном.']];
     for (const [k, t, d] of T) {
       l.tpl[k] = l.tpl[k] || [];
       b.append(...[h('div', { class: 'tplname' }, t), d ? h('div', { class: 'tiny dim', style: { margin: '-4px 2px 6px' } }, d) : null].filter(Boolean), itemsEditor(l.tpl[k], { line: l, tokens: true, onChange: () => PL.rebuild() }));
+      if (k === 'lastTrim') b.append(h('div', { class: 'btns' }, h('button', { class: 'btn sm', onclick: () => {
+        const P = INF.presets.metro;
+        ['nedalshe', 'vstoronu', 'sledpoezd'].forEach(key => { if (!l.phrases[key]) l.phrases[key] = { label: P.phrases[key], clip: null }; });
+        if (!l.phrases.gong) l.phrases.gong = { label: 'Гонг', clip: null };
+        l.tpl.lastTrim = INF.clone(P.tpl.lastTrim); save(); PL.rebuild(); api.re();
+        toast('Готово. Назначь звуки новым фразам выше, в «Фразах»');
+      } }, '↺ Заполнить как в метро')));
       if (k === 'arr') b.append(h('div', { class: 'btns' }, h('button', { class: 'btn sm', onclick: () => addTrimmedDest(l, api) }, ic('add'), '«Поезд следует до…» при укороченном рейсе')));
       if (k === 'start') b.append(h('div', { class: 'tiny dim', style: { margin: '8px 2px 4px' } }, 'Когда звучит начальное'), h('div', { class: 'seg' }, [['sep', 'отдельным объявлением'], ['dep', 'вместе с первым отправлением']].map(([v, t2]) => h('button', { class: (l.startWith || 'sep') === v ? 'on' : '', onclick: () => { l.startWith = v; save(); PL.rebuild(); api.re(); } }, t2))));
       if (k === 'pass') b.append(h('div', { class: 'tiny dim', style: { margin: '8px 2px 4px' } }, 'Когда объявлять проезд'), h('div', { class: 'seg' }, [['arr', 'при прибытии на предыдущую'], ['dep', 'при отправлении'], ['both', 'оба раза']].map(([v, t2]) => h('button', { class: (l.passAt || 'arr') === v ? 'on' : '', onclick: () => { l.passAt = v; save(); PL.rebuild(); api.re(); } }, t2))));
     }
+  });
+}
+/** Названия станций, вырезанные из «Следующая станция X» (как делали в настоящих информаторах).
+    Граница — самая тихая точка около заданной длины «Следующая станция»; каждую можно подвинуть на слух. */
+async function cutNamesTool(l, api) {
+  const items = [];
+  const busy = openBusy('Ищу границы…');
+  try {
+    for (const st of l.stations) {
+      const cid = st.clips.name || st.clips['name@1'];
+      const c = cid && clip(cid); if (!c) continue;
+      const p = await AE.clipPart(c), r = p.buf.sampleRate, w = Math.floor(r * 0.02), env = [];
+      const nch = p.buf.numberOfChannels, ch = [...Array(nch)].map((_, i) => p.buf.getChannelData(i));
+      for (let i = p.a; i + w <= p.b; i += w) { let s2 = 0; for (let j = i; j < i + w; j++) { let v = 0; for (const d of ch) v += d[j]; v /= nch; s2 += v * v; } env.push(Math.sqrt(s2 / w)); }
+      const mx = Math.max(...env, 1e-6), s0 = Math.max(0, env.findIndex(x => x > mx * 0.05));
+      items.push({ st, c, p, r, env, s0, adj: 0, on: !st.clips.imya, cut: 0 });
+    }
+  } catch (e) { toast('Ошибка: ' + e.message); }
+  UI.pop();
+  if (!items.length) { toast('У станций нет звуков названий'); return; }
+  const ui = { head: 0.85 };
+  const place = it => {
+    // самая тихая точка (сглаженно) в окне ±0.25 с вокруг «длины» после начала речи
+    const a = Math.max(it.s0 + 1, Math.round(it.s0 + (ui.head - 0.25) / 0.02)), b = Math.min(it.env.length - 2, Math.round(it.s0 + (ui.head + 0.25) / 0.02));
+    let best = Math.min(it.env.length - 2, Math.round(it.s0 + ui.head / 0.02)), bv = 1e9;
+    for (let i = a; i <= b; i++) { const v = it.env[i - 1] + it.env[i] + it.env[i + 1]; if (v < bv) { bv = v; best = i; } }
+    it.cut = Math.max(0, best * 0.02 + it.adj);
+  };
+  const play = it => { AE.stopPreview(); const ac = AE.ac(), s2 = ac.createBufferSource(), g = ac.createGain(); g.gain.value = S.set.vol; s2.buffer = it.p.buf; s2.connect(g).connect(ac.destination); s2.start(0, it.p.a / it.r + it.cut, Math.max(0.05, (it.p.b - it.p.a) / it.r - it.cut)); AE.prev = s2; };
+  openSheet('Названия из «Следующая станция…»', (b, sapi) => {
+    items.forEach(place);
+    const hv = h('b', null, ui.head.toFixed(2) + ' с');
+    b.append(h('p', { class: 'small dim' }, 'Программа отрезает «Следующая станция» в самом тихом месте около заданной длины. Послушай несколько ▶ и подгони ползунок, а отдельные станции — кнопками ±. Получится звук «имя без „следующая“» — его берут «Поезд следует до…», «в сторону станции…» и проезд без остановки.'),
+      h('label', { class: 'f' }, h('span', null, 'Длина «Следующая станция»: ', hv), h('input', { type: 'range', min: 0.4, max: 1.8, step: 0.05, value: ui.head, onchange: e => { ui.head = +e.target.value; sapi.re(); }, oninput: e => { hv.textContent = (+e.target.value).toFixed(2) + ' с'; } })));
+    b.append(h('div', { class: 'list' }, items.map(it => h('div', { class: 'li', style: { padding: '6px 10px', gap: '6px' } },
+      h('input', { type: 'checkbox', checked: it.on, onchange: e => it.on = e.target.checked }),
+      ib('play', () => play(it), 'Слушать'),
+      h('div', { class: 'grow' }, h('div', { class: 'ell' }, it.st.name), h('div', { class: 'tiny dim' }, 'с ' + it.cut.toFixed(2) + ' с' + (it.st.clips.imya ? ' · уже есть своё' : ''))),
+      h('button', { class: 'btn sm', onclick: () => { it.adj -= 0.04; place(it); play(it); sapi.re(); } }, '−'),
+      h('button', { class: 'btn sm', onclick: () => { it.adj += 0.04; place(it); play(it); sapi.re(); } }, '+'),
+      ib('cut', () => { UI.pop(); openSlicer(it.c.id); }, 'Нарезать вручную')))));
+    b.append(h('div', { class: 'btns' }, h('button', { class: 'btn pri wide', onclick: async () => {
+      let n = 0;
+      for (const it of items) {
+        if (!it.on) continue;
+        const id = INF.uid(), off = (it.c.start || 0), end = it.p.b / it.r;
+        S.clips[id] = { id, name: 'имя ' + it.st.name, pack: it.c.pack, blob: it.c.blob, start: +(off + it.cut).toFixed(3), end: +end.toFixed(3), dur: end - off - it.cut };
+        it.st.clips.imya = id; n++;
+      }
+      await DB.put('kv', 'state', S); PL.rebuild(); UI.pop(); api.re(); toast('Названий вырезано: ' + n);
+    } }, 'Сохранить отмеченные')));
   });
 }
 /** Метро: на каждой станции «Поезд следует до станции X», только если рейс укороченный */

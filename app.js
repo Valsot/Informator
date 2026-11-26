@@ -1,6 +1,6 @@
 /* Информатор — ядро: хранилище, звук, пульт, импорт, банк звуков */
 'use strict';
-const APP_VERSION = '9 · 26.11.2026';
+const APP_VERSION = '10 · 26.11.2026';
 
 /* ================= DOM-помощники ================= */
 // append(null) в DOM печатает «null» — в этом приложении пустые значения просто пропускаем
@@ -372,9 +372,10 @@ function viewPlayer() {
     h('button', { onclick: () => PL.stop() }, ic('stop'), 'Стоп'),
     h('button', { onclick: () => PL.replay() }, ic('repeat'), 'Повтор'),
     h('button', { onclick: () => { PL.idx = 0; PL.savePos(); UI.refreshPlayer(); } }, ic('swap'), 'В начало')));
-  // регулярные: переключатели на ходу
-  if (R.rules && R.rules.length) {
-    root.append(h('div', { class: 'chips' }, R.rules.map(r => h('button', { class: 'chip' + (r.enabled ? ' on' : ''), onclick: () => { r.enabled = !r.enabled; save(); PL.rebuild(); UI.refreshPlayer(); } }, h('span', { class: 'dot' }), r.name))));
+  // регулярные: переключатели на ходу (+ «про следующий поезд» на укороченном рейсе)
+  const trimmedNow = R.mode === 'build' && R.trim && Object.keys(R.trim).length;
+  if ((R.rules && R.rules.length) || trimmedNow) {
+    root.append(h('div', { class: 'chips' }, trimmedNow ? h('button', { class: 'chip' + (R.nextFull !== false ? ' on' : ''), onclick: () => { R.nextFull = R.nextFull === false; save(); PL.rebuild(); UI.refreshPlayer(); } }, h('span', { class: 'dot' }), 'Про следующий поезд') : null, (R.rules || []).map(r => h('button', { class: 'chip' + (r.enabled ? ' on' : ''), onclick: () => { r.enabled = !r.enabled; save(); PL.rebuild(); UI.refreshPlayer(); } }, h('span', { class: 'dot' }), r.name))));
   }
   // служебные кнопки
   if (S.service.length) {
