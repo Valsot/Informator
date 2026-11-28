@@ -1,6 +1,6 @@
 /* Информатор — ядро: хранилище, звук, пульт, импорт, банк звуков */
 'use strict';
-const APP_VERSION = '10 · 26.11.2026';
+const APP_VERSION = '11 · 28.11.2026';
 
 /* ================= DOM-помощники ================= */
 // append(null) в DOM печатает «null» — в этом приложении пустые значения просто пропускаем
@@ -729,7 +729,7 @@ function viewMore() {
   try { await DB.open(); S = (await DB.get('kv', 'state')) || DEF(); }
   catch (e) { S = DEF(); toast('Хранилище недоступно: ' + e.message, 5000); }
   S = Object.assign(DEF(), S); S.set = Object.assign(DEF().set, S.set);
-  if (S.lines.some(l => INF.migrateLine(l))) save();
+  if (S.lines.map(l => INF.migrateLine(l)).some(Boolean)) save();
   PL.load(); UI.scrollCur = true; UI.render();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     // новая версия приложения → один раз перезагрузить страницу

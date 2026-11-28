@@ -38,7 +38,7 @@ function newRoute() {
 function newLine(after) {
   menu('Какой транспорт? (задаёт шаблоны объявлений)', Object.entries(INF.presets).map(([k, p]) => ({
     label: p.title, do: () => {
-      const l = { id: INF.uid(), name: 'Новая линия', city: '', type: p.title, color: k === 'train' ? '#1f8f8f' : k === 'tram' ? '#c2185b' : '#d6083b', stations: [], phrases: {}, tpl: {} };
+      const l = { id: INF.uid(), migr: 2, name: 'Новая линия', city: '', type: p.title, color: k === 'train' ? '#1f8f8f' : k === 'tram' ? '#c2185b' : '#d6083b', stations: [], phrases: {}, tpl: {} };
       applyPreset(l, k); S.lines.push(l); save();
       editLine(l);
       if (after) after(l);
@@ -99,7 +99,7 @@ function pickStation(line, cb, title) {
 }
 
 /* ================= Редактор элементов объявления ================= */
-const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков', fewSkips: 'если пропусков не больше половины', manySkips: 'если пропусков больше половины', notManySkips: 'если пропусков нет или не больше половины', trimmed: 'если рейс укороченный', notTrimmed: 'если рейс до обычной конечной', nextFull: 'если объявляем про следующий поезд', noNextFull: 'если про следующий поезд не объявляем', hasPasses: 'если до следующей проезд без остановки', noPasses: 'если до следующей проезда нет' };
+const CONDS = { '': 'всегда', hasSkips: 'если есть пропуски', noSkips: 'если нет пропусков', fewSkips: 'если пропусков не больше половины', manySkips: 'если пропусков больше половины', notManySkips: 'если пропусков нет или не больше половины', trimmed: 'если рейс укороченный', notTrimmed: 'если рейс до обычной конечной', nextFull: 'если объявляем про следующий поезд', atLineEnd: 'если отправляемся с конечной линии', notAtLineEnd: 'если не с конечной линии', noNextFull: 'если про следующий поезд не объявляем', hasPasses: 'если до следующей проезд без остановки', noPasses: 'если до следующей проезда нет' };
 function itemLabel(it, line) {
   if (it.pause) return '⏸ ' + (it.pause / 1000) + ' с';
   if (it.c) return '♪ ' + clipLabel(it.c);

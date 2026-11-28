@@ -170,7 +170,7 @@
       phrases: { gong: 'Гонг', dver: 'Осторожно, двери закрываются', paus: 'Пауза', uvst: 'Уважаемые пассажиры! Станцию', bezost: 'поезд проследует без остановки', nedalshe: 'Поезд дальше не идёт, просьба освободить вагоны', vstoronu: 'В сторону станции', sledpoezd: 'поедет следующий поезд' },
       tpl: {
         start: [],
-        dep: [{ p: 'gong' }, { p: 'dver' }, { t: 'next', s: 'otpr', fb: 1 }],
+        dep: [{ p: 'gong' }, { p: 'dver', cond: 'notAtLineEnd' }, { t: 'next', s: 'otpr', fb: 1 }],
         arr: [{ p: 'gong' }, { t: 'cur', s: 'prib', fb: 1 }, { p: 'paus' }, { t: 'next', s: 'name' }],
         last: [{ p: 'gong' }, { t: 'cur', s: 'last', fb: 1 }],
         pass: [{ p: 'uvst' }, { t: 'pass', s: 'imya' }, { p: 'bezost' }],
@@ -195,13 +195,22 @@
   INF.clone = o => JSON.parse(JSON.stringify(o));
   /** Старые линии: «со всеми остановками» звучит и перед «кроме» (в пакетах «кроме» — отдельное слово) */
   INF.migrateLine = function (l) {
+    let ch2 = false;
+    // метро: от конечных линии «двери закрываются» уже вшито в запись отправления — не повторять
+    if ((l.migr || 0) < 2) {
+      l.migr = 2; ch2 = true;
+      if (l.phrases && l.phrases.gong && l.tpl && l.tpl.dep) l.tpl.dep.forEach(x => { if (x.p && /^dve/.test(x.p) && !x.cond) x.cond = 'notAtLineEnd'; });
+    }
+    return migrateStart(l) || ch2;
+  };
+  function migrateStart(l) {
     const st = l.tpl && l.tpl.start; if (!st) return false;
     if (!st.some(x => x.p === 'krome' && x.cond === 'fewSkips')) return false;
     let ch = false;
     st.forEach(x => { if (x.p && x.p !== 'krome' && x.cond === 'noSkips') { x.cond = 'notManySkips'; ch = true; } });
     if (l.phrases && l.phrases.krome && l.phrases.krome.label === 'со всеми остановками, кроме') { l.phrases.krome.label = 'кроме'; ch = true; }
     return ch;
-  };
+  }
 
   /** Направления маршрута по его пути-кольцу. Путь: [{id, st, skip, term}];
       отметки term делят кольцо на направления; без отметок маршрут кольцевой.
@@ -243,6 +252,8 @@
 
   /** Раскрыть элементы в сегменты звука.
       ctx: {cur,next,dest,first,prev,pass, skips,stops,passes:[st], inter, dir, line} */
+  // текущая станция — крайняя в линии (не маршрута)
+  const lineEnd = c => { const L = c.line && c.line.stations; return !!(L && L.length && c.cur && (L[0].id === c.cur.id || L[L.length - 1].id === c.cur.id)); };
   INF.COND = {
     hasSkips: c => (c.skips || []).length > 0,
     noSkips: c => !(c.skips || []).length,
@@ -250,6 +261,8 @@
     manySkips: c => (c.skips || []).length > (c.inter || 0) / 2,
     notManySkips: c => (c.skips || []).length <= (c.inter || 0) / 2,
     trimmed: c => !!c.trimmed,
+    atLineEnd: c => lineEnd(c),
+    notAtLineEnd: c => !lineEnd(c),
     notTrimmed: c => !c.trimmed,
     nextFull: c => !!c.trimmed && c.nextFull !== false,
     noNextFull: c => !!c.trimmed && c.nextFull === false,
@@ -563,6 +576,7 @@
       phrases.uvst = phrases.uvst || { label: INF.presets.metro.phrases.uvst, clip: null };
       phrases.bezost = phrases.bezost || { label: INF.presets.metro.phrases.bezost, clip: null };
       tpl.pass = INF.clone(INF.presets.metro.tpl.pass);
+      tpl.dep.forEach(x => { if (x.p && /^dve/.test(x.p) && !x.cond) x.cond = 'notAtLineEnd'; });
     } else tpl.pass = [];
     // звуки «кроме» / «с остановками» могут лежать в пакете, хотя старый .cfg их не использует
     const packs = new Set(); route.dirs.forEach(d => d.forEach(a => a.items.forEach(x => { const c = x.c && clipById(x.c); if (c && c.pack) packs.add(c.pack); })));
@@ -574,7 +588,7 @@
       phrases.krome = phrases.krome || { label: INF.presets.train.phrases.krome, clip: findPh(/krom/i) };
       phrases.sost = phrases.sost || { label: INF.presets.train.phrases.sost, clip: findPh(/^(s_?ost|sostanov.*)$/i) };
     }
-    return { line: { id: INF.uid(), name: route.line || route.name, city: route.city || '', type: route.type || '', color: route.color || '#d6083b', stations, phrases, tpl, passAt }, rules, path };
+    return { line: { id: INF.uid(), name: route.line || route.name, city: route.city || '', type: route.type || '', color: route.color || '#d6083b', stations, phrases, tpl, passAt, migr: 2 }, rules, path };
   };
 
   /* ---------- WAV ---------- */
