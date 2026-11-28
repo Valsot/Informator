@@ -1,6 +1,6 @@
 /* Информатор — ядро: хранилище, звук, пульт, импорт, банк звуков */
 'use strict';
-const APP_VERSION = '11 · 28.11.2026';
+const APP_VERSION = '12 · 28.11.2026';
 
 /* ================= DOM-помощники ================= */
 // append(null) в DOM печатает «null» — в этом приложении пустые значения просто пропускаем
@@ -113,14 +113,16 @@ const AE = {
     }
     return { chans, rate };
   },
+  /** segs → {url, dur}: WAV дополняется тишиной до 6 с (для плеера в шторке), dur — настоящая длина */
   async url(segs) {
     const key = JSON.stringify(segs) + '|' + (S.set.gap || 0);
     if (this.urls.has(key)) return this.urls.get(key);
-    const m = await this.mix(segs);
-    const u = URL.createObjectURL(INF.encodeWav(m.chans, m.rate));
-    this.urls.set(key, u);
-    while (this.urls.size > 24) { const k = this.urls.keys().next().value; URL.revokeObjectURL(this.urls.get(k)); this.urls.delete(k); }
-    return u;
+    const m = await this.mix(segs), real = m.chans[0].length, min = Math.ceil(6 * m.rate);
+    const chans = real >= min ? m.chans : m.chans.map(c => { const x = new Float32Array(min); x.set(c); return x; });
+    const r = { url: URL.createObjectURL(INF.encodeWav(chans, m.rate)), dur: real / m.rate };
+    this.urls.set(key, r);
+    while (this.urls.size > 24) { const k = this.urls.keys().next().value; URL.revokeObjectURL(this.urls.get(k).url); this.urls.delete(k); }
+    return r;
   },
   /** Быстрое прослушивание (не через основной плеер) */
   async preview(segs) {
@@ -139,7 +141,7 @@ const AE = {
 /* ================= Плеер ================= */
 const au = $('#au');
 const PL = {
-  route: null, dir: 0, anns: [], idx: 0, playing: null, queue: [], timer: 0, nowLabel: '',
+  route: null, dir: 0, anns: [], idx: 0, playing: null, queue: [], timer: 0, nowLabel: '', endFired: true, realDur: 0,
   load() {
     this.lastKey = null;
     this.route = routeById(S.set.route) || S.routes[0] || null;
@@ -192,17 +194,24 @@ const PL = {
     if (!segs.length) { toast('У объявления нет звуков'); this.onEnded(); return; }
     try {
       AE.ac();
-      const u = await AE.url(segs);
-      au.src = u; au.volume = S.set.vol; this.nowLabel = label;
+      const r = await AE.url(segs);
+      clearTimeout(this.endT); this.endFired = false; this.userPaused = false; this.realDur = r.dur;
+      au.src = r.url; au.volume = S.set.vol; this.nowLabel = label;
       await au.play();
-      this.media(label);
-    } catch (e) { toast('Ошибка звука: ' + e.message); this.nowLabel = ''; }
-    UI.refreshPlayer();
+      this.armEnd();
+    } catch (e) { toast('Ошибка звука: ' + e.message); this.nowLabel = ''; this.endFired = true; }
+    this.meta(); UI.refreshPlayer();
   },
+  /* Запись дополнена тишиной до 6 с — иначе Android не показывает плеер в шторке.
+     Настоящий конец ловим таймером и ставим на паузу: плеер остаётся в шторке с ▶. */
+  armEnd() { clearTimeout(this.endT); this.endT = setTimeout(() => this.realEnd(), Math.max(0, (this.realDur - au.currentTime) * 1000)); },
+  realEnd() { if (this.endFired) return; this.endFired = true; clearTimeout(this.endT); au.pause(); this.onEnded(); },
+  /** Вывести пульт в шторку уведомлений без объявления */
+  async dock() { await this.playSegs([{ pause: 200 }], 'Информатор'); },
   /** служебное: если что-то играет — после него, иначе сразу */
   svc(sv, delay) {
     const segs = INF.expand(sv.items, { dir: typeof this.dir === 'number' ? this.dir : 0 }, null);
-    if (!au.paused && !au.ended && au.src) { this.queue.push({ segs, label: sv.label, delay: delay || 300 }); toast('«' + sv.label + '» — после текущего'); }
+    if (!this.endFired && !au.paused) { this.queue.push({ segs, label: sv.label, delay: delay || 300 }); toast('«' + sv.label + '» — после текущего'); }
     else { this.stop(true); this.playing = 'svc:' + sv.id; this.playSegs(segs, sv.label); }
   },
   onEnded() {
@@ -212,24 +221,33 @@ const PL = {
       this.timer = setTimeout(() => this.playSegs(q.segs, q.label), q.delay || 0);
       return;
     }
-    this.playing = null; this.nowLabel = ''; UI.refreshPlayer();
+    this.playing = null; this.nowLabel = ''; this.meta(); UI.refreshPlayer();
   },
-  stop(keep) { clearTimeout(this.timer); this.queue = []; au.pause(); au.removeAttribute('src'); try { au.load(); } catch (e) { } if (!keep) { this.playing = null; this.nowLabel = ''; UI.refreshPlayer(); } },
-  replay() { const k = this.playing; const i = this.anns.findIndex(a => a.key === k); if (i >= 0) this.playAnn(i); else if (this.idx > 0) this.playAnn(this.idx - 1); },
-  media(label) {
+  stop(keep) { clearTimeout(this.timer); clearTimeout(this.endT); this.endFired = true; this.queue = []; au.pause(); if (!keep) { this.playing = null; this.nowLabel = ''; this.meta(); UI.refreshPlayer(); } },
+  replay() { const k = this.playing || this.lastKey; const i = this.anns.findIndex(a => a.key === k); if (i >= 0) this.playAnn(i); else if (this.idx > 0) this.playAnn(this.idx - 1); },
+  /** Подпись в шторке: что звучит или что будет следующим */
+  meta() {
     if (!('mediaSession' in navigator)) return;
     try {
-      navigator.mediaSession.metadata = new MediaMetadata({ title: label, artist: this.route ? this.route.name : 'Информатор', album: this.route ? (this.route.line && lineById(this.route.line) ? lineById(this.route.line).name : this.route.lineName || '') : '', artwork: [{ src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] });
+      const n = this.anns[this.nextPlayable(this.idx)];
+      const sounding = !this.endFired && this.nowLabel;
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: sounding ? '🔊 ' + this.nowLabel : n ? 'Далее: ' + n.label : 'Маршрут окончен',
+        artist: this.route ? this.route.name : 'Информатор', album: 'Информатор',
+        artwork: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icon-512.png', sizes: '512x512', type: 'image/png' }]
+      });
+      navigator.mediaSession.playbackState = sounding && !au.paused ? 'playing' : 'paused';
     } catch (e) { }
   }
 };
-au.addEventListener('ended', () => PL.onEnded());
-au.addEventListener('timeupdate', () => { const p = $('#prog'); if (p && au.duration) p.style.width = (au.currentTime / au.duration * 100) + '%'; });
+au.addEventListener('ended', () => PL.realEnd());
+au.addEventListener('timeupdate', () => { const p = $('#prog'); if (p && PL.realDur) p.style.width = Math.min(100, au.currentTime / PL.realDur * 100) + '%'; });
+// шторка, экран блокировки, гарнитура: ▶ — объявить (или продолжить), ⏮ ⏭ — сдвинуть указатель
 if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession, set = (a, f) => { try { ms.setActionHandler(a, f); } catch (e) { } };
-  set('play', () => { if (au.src && au.paused && au.currentTime > 0 && !au.ended) au.play(); else PL.go(); });
-  set('pause', () => au.pause());
-  set('nexttrack', () => PL.go());
+  set('play', () => { if (PL.userPaused && !PL.endFired) { PL.userPaused = false; au.play().then(() => { PL.armEnd(); PL.meta(); }); } else PL.go(); });
+  set('pause', () => { if (!PL.endFired) { PL.userPaused = true; clearTimeout(PL.endT); au.pause(); PL.meta(); } else PL.go(); });
+  set('nexttrack', () => PL.step(1));
   set('previoustrack', () => PL.step(-1));
   set('stop', () => PL.stop());
 }
@@ -250,7 +268,7 @@ const UI = {
     const v = $('#view'); v.innerHTML = '';
     v.append(({ player: viewPlayer, routes: viewRoutes, bank: viewBank, more: viewMore })[this.tab]());
   },
-  refreshPlayer() { if (this.tab === 'player' && !this.stack.length) { const y = $('#view').scrollTop; this.render(); $('#view').scrollTop = y; } else if (this.tab === 'player') this.dirty = true; },
+  refreshPlayer() { PL.meta(); if (this.tab === 'player' && !this.stack.length) { const y = $('#view').scrollTop; this.render(); $('#view').scrollTop = y; } else if (this.tab === 'player') this.dirty = true; },
   guard: false,
   push(entry) { this.stack.push(entry); if (!this.guard) { history.pushState({ g: 1 }, ''); this.guard = true; } },
   pop() { const e = this.stack.pop(); if (e) e.close(); this.after(); },
@@ -372,6 +390,7 @@ function viewPlayer() {
     h('button', { onclick: () => PL.stop() }, ic('stop'), 'Стоп'),
     h('button', { onclick: () => PL.replay() }, ic('repeat'), 'Повтор'),
     h('button', { onclick: () => { PL.idx = 0; PL.savePos(); UI.refreshPlayer(); } }, ic('swap'), 'В начало')));
+  if ('mediaSession' in navigator) root.append(h('button', { class: 'btn ghost sm wide', onclick: () => { PL.dock(); toast('Пульт — в шторке уведомлений и на экране блокировки'); } }, ic('bell'), 'Вывести пульт в шторку'));
   // регулярные: переключатели на ходу (+ «про следующий поезд» на укороченном рейсе)
   const trimmedNow = R.mode === 'build' && R.trim && Object.keys(R.trim).length;
   if ((R.rules && R.rules.length) || trimmedNow) {
@@ -717,7 +736,7 @@ function viewMore() {
   root.append(h('h2', null, 'Как пользоваться'));
   root.append(h('div', { class: 'card help' },
     h('p', null, h('b', null, 'Пульт. '), 'Большая кнопка ▶ объявляет следующее и сдвигает указатель — как «>» в старом Информаторе. ⏮ ⏭ двигают указатель без звука. Тап по строке — сделать её следующей, ▶ справа — объявить сразу, долгое нажатие — меню (служебное после, без остановки…).'),
-    h('p', null, h('b', null, 'Экран блокировки и гарнитура. '), 'Кнопка «следующий трек» объявляет следующее, «предыдущий» — шаг назад.'),
+    h('p', null, h('b', null, 'Экран блокировки и гарнитура. '), 'В шторке уведомлений и на экране блокировки: ▶ объявляет следующее, ⏮ ⏭ двигают указатель. Кнопка гарнитуры (одно нажатие) — объявить. Пульт появляется в шторке после первого объявления или кнопкой «Вывести пульт в шторку».'),
     h('p', null, h('b', null, 'Линия '), '— справочник остановок со звуками названий, фразами и шаблонами объявлений. ', h('b', null, 'Маршрут '), '— кольцо остановок по линии: отметки «конечная» делят его на направления. ', h('b', null, 'Регулярные '), '— добавки к каждой N-й остановке (их можно включать на ходу). ', h('b', null, 'Служебные '), '— отдельные сообщения: кнопкой в пульте или с привязкой «после объявления».'),
     h('p', { class: 'dim small' }, 'Версия ' + APP_VERSION + '. Основано на «Информаторе» (ista011, 2015; alTerr, 2018) — формат пакетов .zip/.cfg поддерживается как есть.')));
   root.append(h('button', { class: 'btn danger wide', style: { marginTop: '20px' }, onclick: () => confirmBox('Стереть все маршруты, линии и звуки с этого устройства?', async () => { for (const k of await DB.keys('blobs')) await DB.del('blobs', k); S = DEF(); await DB.put('kv', 'state', S); PL.load(); UI.go('player'); }, 'Стереть всё') }, 'Стереть всё'));
